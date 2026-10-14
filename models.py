@@ -1,4 +1,7 @@
-"""Response models matching the pod's OpenAPI contract."""
+"""Response models matching the pod's shared OpenAPI contract (openapi.yaml).
+
+Field names are snake_case, exactly as written in the shared spec.
+"""
 
 from enum import Enum
 from typing import Literal
@@ -16,19 +19,147 @@ class WcagLevel(str, Enum):
     AA = "AA"
 
 
-class Health(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+class Strict(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
+
+# --- GET /health -----------------------------------------------------------
+
+class Health(Strict):
     status: Literal["ok"]
-    spec_version: str = Field(alias="specVersion")
+    spec_version: str
 
 
-class Check(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
+# --- GET /checks -----------------------------------------------------------
 
-    check_id: str = Field(alias="checkId")
+class Check(Strict):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    check_id: str
     name: str
-    wcag_criterion: str = Field(alias="wcagCriterion")
-    wcag_level: WcagLevel = Field(alias="wcagLevel")
+    wcag_criterion: str
+    wcag_level: WcagLevel
     classification: Classification
 
+
+class CheckList(Strict):
+    checks: list[Check]
+
+
+# --- POST /process -----------------------------------------------------------
+
+class Location(Strict):
+    page: int | None = None
+    object_ref: str | None = None
+    description: str
+
+
+class Finding(Strict):
+    finding_id: str
+    check_id: str
+    issue_type: str
+    wcag_criterion: str
+    wcag_level: WcagLevel
+    location: Location
+    evaluation_result: Literal["fail", "needs_review"]
+    classification: Classification
+    status: Literal["fixed", "repair_failed", "needs_human_review"]
+    fix_description: str | None = None
+
+
+class Repair(Strict):
+    repair_id: str
+    finding_id: str
+    action: str
+    validation_result: Literal["passed", "failed"]
+
+
+class InputFile(Strict):
+    file_name: str
+    sha256: str
+    size_bytes: int
+
+
+class OutputFile(Strict):
+    file_name: str
+    media_type: Literal["application/pdf"] = "application/pdf"
+    sha256: str
+    modified: bool = False
+    content_base64: str
+
+
+class Summary(Strict):
+    total_issues: int
+    fixed_count: int
+    human_review_count: int
+
+
+COMPLIANCE_STATEMENT = (
+    "This report does not certify ADA Title II or WCAG 2.1 conformance."
+)
+
+
+class EvaluationResult(Strict):
+    evaluation_id: str
+    status: Literal["completed"] = "completed"
+    input: InputFile
+    outcome: Literal["completed_with_repairs", "completed_no_repairs"]
+    checks_performed: list[str]
+    findings: list[Finding]
+    repairs: list[Repair]
+    new_issues_after_repair: list[Finding]
+    human_review_items: list[str]
+    summary: Summary
+    limitations: list[str]
+    compliance_statement: Literal[
+        "This report does not certify ADA Title II or WCAG 2.1 conformance."
+    ] = COMPLIANCE_STATEMENT
+    output_pdf: OutputFile
+    report_pdf: OutputFile
+
+
+class Error(Strict):
+    status: Literal["error"] = "error"
+    error_code: Literal[
+        "MISSING_FILE",
+        "INVALID_FILE_TYPE",
+        "FILE_TOO_LARGE",
+        "CORRUPTED_PDF",
+        "UNREADABLE_PDF",
+        "ENCRYPTED_PDF",
+        "PASSWORD_PROTECTED_PDF",
+        "PROCESSING_ERROR",
+        "EXTERNAL_SERVICE_UNAVAILABLE",
+    ]
+    message: str
+
+
+# --- Course test endpoints: /test/setup and /test/report ---------------------
+
+class SetupRequest(Strict):
+    session_id: str = Field(min_length=1)
+    setup: dict = Field(default_factory=dict)
+
+
+class SessionRef(Strict):
+    session_id: str
+
+
+class CodeCoverage(Strict):
+    covered: int | None
+    total: int | None
+    basis: str
+
+
+class SystemCoverage(Strict):
+    code: CodeCoverage
+
+
+class SystemReport(Strict):
+    session_id: str
+    coverage: SystemCoverage
+
+
+class TestError(Strict):
+    message: str = Field(min_length=1)
+    source: Literal["tester", "system", "communication", "unknown"] = "system"
