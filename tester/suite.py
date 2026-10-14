@@ -21,6 +21,9 @@ from typing import Callable
 import httpx
 import pikepdf
 
+# Tests planned for a later phase are reported as "skip" until the pod reaches it.
+CURRENT_PHASE = 3
+
 PROJECT_CALL_TIMEOUT_SECONDS = 60.0
 MAX_FILE_SIZE_BYTES = 20_971_520
 
@@ -290,16 +293,17 @@ class TestCase:
     run: Callable[[Context], str]
     components: tuple[str, ...] = field(default=())
     criteria: tuple[str, ...] = field(default=())
+    phase: int = 3  # first phase in which this test is expected to run
 
 
 SUITE: list[TestCase] = [
     TestCase("T-01", t_health, ("COMP-HEALTH",)),
     TestCase("T-02", t_checks, ("COMP-CATALOG",)),
-    TestCase("T-03", t_clean_pdf, ("COMP-DETECTION", "COMP-REPORT"), ("AC-01", "AC-08")),
+    TestCase("T-03", t_clean_pdf, ("COMP-REPORT",), ("AC-01", "AC-08")),
     TestCase("T-04", t_repair_title_and_lang,
              ("COMP-DETECTION", "COMP-CLASSIFICATION", "COMP-REPAIR",
               "COMP-REVALIDATION", "COMP-REPORT"),
-             ("AC-03", "AC-04", "AC-05", "AC-06", "AC-08")),
+             ("AC-03", "AC-04", "AC-05", "AC-06", "AC-08"), phase=5),
     TestCase("T-05", t_no_compliance_claim, ("COMP-REPORT",), ("AC-09",)),
     TestCase("T-06", t_non_pdf, ("COMP-VALIDATION",), ("AC-02",)),
     TestCase("T-07", t_missing_file, ("COMP-VALIDATION",), ("AC-02",)),

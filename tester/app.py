@@ -201,6 +201,11 @@ def test_run(body: RunBody):
     try:
         ctx = suite.Context(client, session.target_url, session.session_id)
         for index, case in enumerate(suite.SUITE):
+            if case.phase > suite.CURRENT_PHASE:
+                results.append({"test_id": case.test_id, "outcome": "skip",
+                                "message": f"Planned for Phase {case.phase}; not run in "
+                                           f"Phase {suite.CURRENT_PHASE}."})
+                continue
             try:
                 message = case.run(ctx)
                 results.append({"test_id": case.test_id, "outcome": "pass", "message": message})

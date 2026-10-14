@@ -122,7 +122,31 @@ def test_encrypted_pdf_is_422() -> None:
 
 # --- POST /process: success ---------------------------------------------------
 
-def test_pdf_missing_title_and_language_is_repaired() -> None:
+def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged() -> None:
+    """Phase 3 (default): valid PDFs get a well-formed result with no checks or repairs."""
+    original = make_pdf()  # missing title and language, but nothing should be fixed yet
+    response = post_pdf(original, name="annual_report.pdf")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["outcome"] == "completed_no_repairs"
+    assert body["checks_performed"] == []
+    assert body["findings"] == [] and body["repairs"] == []
+    assert body["summary"] == {"total_issues": 0, "fixed_count": 0, "human_review_count": 0}
+    assert "Phase 4" in body["limitations"][0]
+    assert body["output_pdf"]["modified"] is False
+    assert base64.b64decode(body["output_pdf"]["content_base64"]) == original
+    assert base64.b64decode(body["report_pdf"]["content_base64"]).startswith(b"%PDF-")
+
+
+@pytest.fixture
+def title_lang_on(monkeypatch):
+    """Turn on the early Phase 4-5 work (off by default in Phase 3)."""
+    import pipeline
+    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+
+
+def test_pdf_missing_title_and_language_is_repaired(title_lang_on) -> None:
     original = make_pdf()
     original_hash = hashlib.sha256(original).hexdigest()
     response = post_pdf(original, name="annual_report.pdf")
@@ -157,7 +181,7 @@ def test_pdf_missing_title_and_language_is_repaired() -> None:
     assert hashlib.sha256(original).hexdigest() == original_hash
 
 
-def test_clean_pdf_is_returned_unchanged() -> None:
+def test_clean_pdf_is_returned_unchanged(title_lang_on) -> None:
     original = make_pdf(title="Budget", lang="en-US", display_title=True)
     body = post_pdf(original).json()
     assert body["outcome"] == "completed_no_repairs"

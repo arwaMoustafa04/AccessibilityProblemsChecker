@@ -3,11 +3,16 @@
 Stages (shared spec, POST /process description):
 RECEIVED -> VALIDATED -> EVALUATED -> CLASSIFIED -> REPAIRED -> REVALIDATED -> REPORTED
 
-Phase 3 scope: input validation is complete, and the two auto-fixable checks
-(CHK-TITLE, CHK-LANG) are detected, repaired on a copy, and re-validated.
-The six human-review checks are not implemented yet (Phase 4); they are left
-out of checks_performed and named in limitations, so an empty findings list is
+Phase 3 (current): input validation is complete, and a valid PDF gets a
+well-formed EvaluationResult with no checks run and no repairs. Checks arrive in
+Phase 4 and automatic repair in Phase 5 (see the Phase 2 milestone plan).
+checks_performed is empty and limitations say why, so an empty findings list is
 never mistaken for "checked and passed".
+
+Early work for Phases 4-5 is already here but switched OFF: detection and repair
+of CHK-TITLE and CHK-LANG. Set the environment variable
+ENABLE_TITLE_LANG_CHECKS=true to turn it on (for local experiments only, until
+the pod reaches Phase 5).
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import PurePath
@@ -34,6 +40,10 @@ from models import (
 
 MAX_FILE_SIZE_BYTES = 20_971_520
 DEFAULT_LANGUAGE = "en-US"
+
+# Off by default: Phase 3 does not run checks or repairs.
+ENABLE_TITLE_LANG_CHECKS = os.environ.get("ENABLE_TITLE_LANG_CHECKS", "").lower() in (
+    "1", "true", "yes")
 
 IMPLEMENTED_CHECKS = ["CHK-TITLE", "CHK-LANG"]
 NOT_YET_IMPLEMENTED = [
@@ -185,15 +195,17 @@ def build_report_pdf(result: dict) -> bytes:
         p(f"Evaluation ID: {result['evaluation_id']}"),
         Spacer(1, 8),
         p("Checks performed", "Heading2"),
-        p(", ".join(result["checks_performed"])),
+        p(", ".join(result["checks_performed"]) or "None yet (checks arrive in Phase 4)."),
         p("Findings", "Heading2"),
     ]
     if result["findings"]:
         for f in result["findings"]:
             story.append(p(f"{f['finding_id']} - {f['check_id']} (WCAG {f['wcag_criterion']}): "
                            f"{f['location']['description']}. Status: {f['status']}."))
-    else:
+    elif result["checks_performed"]:
         story.append(p("No issues found by the checks performed."))
+    else:
+        story.append(p("None: no checks were performed."))
     story.append(p("Automatic repairs", "Heading2"))
     if result["repairs"]:
         for r in result["repairs"]:
@@ -231,9 +243,44 @@ def _finding(fid: str, issue: Issue, status: str, fix: str | None) -> Finding:
     )
 
 
+def _phase3_result(data: bytes, file_name: str) -> EvaluationResult:
+    """Valid PDF, no checks yet: well-formed result, original returned unchanged."""
+    stem = PurePath(file_name).stem
+    result = {
+        "evaluation_id": str(uuid.uuid4()),
+        "status": "completed",
+        "input": {"file_name": file_name, "sha256": _sha256(data), "size_bytes": len(data)},
+        "outcome": "completed_no_repairs",
+        "checks_performed": [],
+        "findings": [],
+        "repairs": [],
+        "new_issues_after_repair": [],
+        "human_review_items": [],
+        "summary": {"total_issues": 0, "fixed_count": 0, "human_review_count": 0},
+        "limitations": [
+            "No accessibility checks were performed: the eight agreed checks are "
+            "implemented in Phase 4 and automatic repair in Phase 5. This response "
+            "only confirms that the PDF was accepted and the interface works.",
+            "Human-review findings are never repaired automatically.",
+        ],
+        "compliance_statement": "This report does not certify ADA Title II or WCAG 2.1 conformance.",
+    }
+    report_bytes = build_report_pdf(result)
+    return EvaluationResult(
+        **result,
+        output_pdf=OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(data),
+                              modified=False, content_base64=_b64(data)),
+        report_pdf=OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
+                              content_base64=_b64(report_bytes)),
+    )
+
+
 def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     file_name = file_name or "upload.pdf"
     pdf = validate_input(data)  # opened from an in-memory copy; `data` is never changed
+    if not ENABLE_TITLE_LANG_CHECKS:
+        pdf.close()
+        return _phase3_result(data, file_name)
     try:
         issues = detect_issues(pdf)
         actions = repair(pdf, issues, file_name) if issues else {}

@@ -55,12 +55,13 @@ def test_full_suite_passes_against_our_system(target) -> None:
     report = resp.json()
     check_report_format(report)
     assert report["session_id"] == sid and report["target_url"] == TARGET
-    failures = [r for r in report["results"] if r["outcome"] != "pass"]
-    assert failures == []
+    outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
+    assert outcomes.pop("T-04") == "skip"  # Phase 5 test
+    assert set(outcomes.values()) == {"pass"}
     cov = report["coverage"]
-    assert (cov["component"]["covered"], cov["component"]["total"]) == (8, 8)
-    # AC-07 needs human-review findings, which arrive in Phase 4.
-    assert (cov["system"]["covered"], cov["system"]["total"]) == (9, 10)
+    # Phase 3 exercises health, catalog, validation and report output only.
+    assert (cov["component"]["covered"], cov["component"]["total"]) == (4, 8)
+    assert (cov["system"]["covered"], cov["system"]["total"]) == (5, 10)
     assert 0 < cov["code"]["covered"] <= cov["code"]["total"]
 
     # Stored report is returned unchanged, and the session cannot be run again.
@@ -174,3 +175,14 @@ def test_tester_abort_keeps_partial_report(target, monkeypatch) -> None:
     assert report["results"][2]["outcome"] == "error" and report["results"][2]["source"] == "tester"
     assert set(outcomes[3:]) == {"skip"}
     assert tester.post("/test/run", json={"session_id": sid}).status_code == 409
+
+
+def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
+    """The early title/language work, switched on, passes the Phase 5 test too."""
+    import pipeline
+    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+    monkeypatch.setattr(suite, "CURRENT_PHASE", 5)
+    sid = setup_session()
+    report = tester.post("/test/run", json={"session_id": sid}).json()
+    check_report_format(report)
+    assert {r["outcome"] for r in report["results"]} == {"pass"}

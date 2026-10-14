@@ -23,14 +23,24 @@ Course test endpoints (required on every system):
 
 ### What `/process` does today (Phase 3)
 
+Phase 3 delivers the shared interface only (see the Phase 2 milestone plan:
+detection is Phase 4, automatic repair is Phase 5).
+
 - **Input validation is complete:** missing file → 400, over 20 MB → 413,
   not a PDF → 415, corrupted / encrypted / password-protected → 422.
-- **CHK-TITLE and CHK-LANG are real:** missing title, `DisplayDocTitle` not set,
-  and missing document language are detected, repaired on a copy (title from the
-  file name, language `en-US`), and re-validated. The upload is never changed.
-- **The six human-review checks are not implemented yet (Phase 4).** They are
-  left out of `checks_performed` and named in `limitations`, so an empty
-  `findings` list never pretends they were checked.
+- **A valid PDF gets a well-formed `EvaluationResult` with no checks run:**
+  `checks_performed` and `findings` are empty, the PDF comes back unchanged,
+  a short report PDF is included, and `limitations` says checks arrive in Phase 4.
+
+Early work for Phases 4-5 (detecting and fixing a missing title and language)
+is already in `pipeline.py` but **switched off**. To try it locally:
+
+```bash
+ENABLE_TITLE_LANG_CHECKS=true uvicorn main:app --port 8001        # Mac/Linux
+set ENABLE_TITLE_LANG_CHECKS=true && uvicorn main:app --port 8001  # Windows cmd
+```
+
+Leave it off for anything Team 3 or the graders test until Phase 5.
 
 ## The tester (`tester/` folder)
 
@@ -51,7 +61,7 @@ The 11 tests (in `tester/suite.py`):
 | T-01 | `GET /health` returns `status: ok` | — |
 | T-02 | `GET /checks` returns the 8 agreed checks and classifications | — |
 | T-03 | A clean PDF gets 200, no repairs, both PDFs returned | AC-01, AC-08 |
-| T-04 | A PDF missing title and language gets both fixed and re-validated | AC-03, AC-04, AC-05, AC-06, AC-08 |
+| T-04 | A PDF missing title and language gets both fixed and re-validated (**Phase 5: reported as `skip` until then**) | AC-03, AC-04, AC-05, AC-06, AC-08 |
 | T-05 | No compliance claim; fixed non-certification statement | AC-09 |
 | T-06 | Non-PDF → 415 | AC-02 |
 | T-07 | No file → 400 | AC-02 |
@@ -60,8 +70,10 @@ The 11 tests (in `tester/suite.py`):
 | T-10 | 20 MB + 1 byte → 413 | AC-10 |
 | T-11 | Exactly 20 MB → accepted | AC-10 |
 
-AC-07 (human-review findings stay unresolved) gets a test in Phase 4, once the
-human-review checks exist.
+Tests for later phases are reported as `skip` until `CURRENT_PHASE` in
+`tester/suite.py` reaches them. In Phase 3 the suite covers 4 of 8 components and
+5 of 10 acceptance criteria; detection tests (Phase 4) and repair tests (Phase 5)
+raise those numbers.
 
 Run it locally next to the system:
 
