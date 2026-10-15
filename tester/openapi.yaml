@@ -1,0 +1,151 @@
+openapi: 3.1.1
+info:
+  title: Team 1 Tester Interface
+  version: 0.3.0
+  description: |
+    Team 1's tester for the PDF accessibility pod (shared spec v0.3.0).
+    It runs 11 planned tests (T-01 to T-11) against a target system's project API
+    (GET /health, GET /checks, POST /process), reads the target's /test/report for
+    code coverage, and returns one suite report.
+    Sessions and reports are kept in memory until the tester instance stops.
+    No authentication is required.
+servers:
+  # Replace with the tester base URL registered in the endpoint registry.
+  - url: https://team1.example.edu/tester
+paths:
+  /test/setup:
+    post:
+      summary: Create a session and wait for system setup to succeed
+      description: >
+        Generates a UUID session ID, sends {"session_id": <id>, "setup": {}} to
+        <target_url>/test/setup, and returns the ID once the system answers 201.
+        Does not run tests. Times out after 10 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_url]
+              additionalProperties: false
+              properties:
+                target_url:
+                  type: string
+                  minLength: 1
+                  description: System base URL (http/https, no /test suffix, query, fragment, or credentials)
+            example: {target_url: "https://team3.example.edu/system"}
+      responses:
+        '201':
+          description: System ready; same session ID returned by tester and system
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id]
+                properties:
+                  session_id: {type: string, minLength: 1}
+        '400':
+          description: Invalid request or target_url
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        default:
+          description: >
+            Setup failed. A system setup error is forwarded with the same status,
+            message, and source. If the system could not be reached, 500 with source
+            "communication".
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /test/run:
+    post:
+      summary: Run the tester sequence and return the complete report
+      description: >
+        Runs T-01 to T-11 once, in order, then reads the system's /test/report.
+        One run per session; later or concurrent runs return 409. Each project call
+        has a 60-second limit and is not retried.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              additionalProperties: false
+              properties:
+                session_id: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Complete tester suite report with results and coverage
+          content: {application/json: {schema: {$ref: '#/components/schemas/SuiteReport'}}}
+        '400':
+          description: Invalid request (does not consume the session)
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: Unknown session
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: The session has already run (including after an abort)
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '500':
+          description: The tester aborted; retrieve the partial report from /test/report
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+  /test/report:
+    get:
+      summary: Retrieve the stored report without running tests
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Stored tester suite report with results and coverage
+          content: {application/json: {schema: {$ref: '#/components/schemas/SuiteReport'}}}
+        '400':
+          description: Missing session_id
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '404':
+          description: Unknown session
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+        '409':
+          description: Execution has not ended; retry the lookup later
+          content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}
+components:
+  schemas:
+    Error:
+      type: object
+      required: [message, source]
+      properties:
+        message: {type: string, minLength: 1}
+        source: {type: string, enum: [tester, system, communication, unknown]}
+    Result:
+      type: object
+      required: [test_id, outcome, message]
+      properties:
+        test_id: {type: string, minLength: 1}
+        outcome: {type: string, enum: [pass, fail, error, skip]}
+        message: {type: string, minLength: 1}
+        source:
+          type: string
+          enum: [tester, system, communication, unknown]
+          description: Present only when outcome is error
+    Measure:
+      type: object
+      required: [covered, total, basis]
+      properties:
+        covered: {type: [integer, 'null'], minimum: 0}
+        total: {type: [integer, 'null'], minimum: 0}
+        basis: {type: string, minLength: 1}
+    SuiteReport:
+      type: object
+      required: [session_id, target_url, results, coverage]
+      properties:
+        session_id: {type: string}
+        target_url: {type: string}
+        results:
+          type: array
+          items: {$ref: '#/components/schemas/Result'}
+        coverage:
+          type: object
+          required: [code, component, system]
+          properties:
+            code: {$ref: '#/components/schemas/Measure'}
+            component: {$ref: '#/components/schemas/Measure'}
+            system: {$ref: '#/components/schemas/Measure'}

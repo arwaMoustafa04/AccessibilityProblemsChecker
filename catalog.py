@@ -61,3 +61,5 @@ CHECKS: tuple[Check, ...] = (
         classification=Classification.AUTO_FIXABLE,
     ),
 )
+
+CHECKS_BY_ID: dict[str, Check] = {check.check_id: check for check in CHECKS}
