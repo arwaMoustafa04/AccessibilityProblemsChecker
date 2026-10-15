@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from main import SPEC_VERSION, app
 
-
 client = TestClient(app)
 
 EXPECTED_CHECKS = {

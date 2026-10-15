@@ -29,13 +29,13 @@ import pikepdf
 
 from catalog import CHECKS_BY_ID
 from models import (
+    ErrorCode,
     EvaluationResult,
     Finding,
-    InputFile,
+    FindingStatus,
     Location,
     OutputFile,
     Repair,
-    Summary,
 )
 
 MAX_FILE_SIZE_BYTES = 20_971_520
@@ -55,7 +55,7 @@ NOT_YET_IMPLEMENTED = [
 class PipelineError(Exception):
     """An expected project error; maps to one of the spec's error responses."""
 
-    def __init__(self, http_status: int, error_code: str, message: str):
+    def __init__(self, http_status: int, error_code: ErrorCode, message: str):
         super().__init__(message)
         self.http_status = http_status
         self.error_code = error_code
@@ -77,10 +77,10 @@ def validate_input(data: bytes) -> pikepdf.Pdf:
         pdf = pikepdf.open(io.BytesIO(data))
     except pikepdf.PasswordError:
         raise PipelineError(422, "PASSWORD_PROTECTED_PDF",
-                            "PDF is password-protected and cannot be opened.")
+                            "PDF is password-protected and cannot be opened.") from None
     except pikepdf.PdfError:
         raise PipelineError(422, "CORRUPTED_PDF",
-                            "PDF is corrupted and cannot be processed.")
+                            "PDF is corrupted and cannot be processed.") from None
     if pdf.is_encrypted:
         pdf.close()
         raise PipelineError(422, "ENCRYPTED_PDF",
@@ -90,7 +90,7 @@ def validate_input(data: bytes) -> pikepdf.Pdf:
     except Exception:
         pdf.close()
         raise PipelineError(422, "UNREADABLE_PDF",
-                            "PDF page tree cannot be read.")
+                            "PDF page tree cannot be read.") from None
     return pdf
 
 
@@ -178,16 +178,20 @@ def _b64(data: bytes) -> str:
 
 
 def build_report_pdf(result: dict) -> bytes:
+    from xml.sax.saxutils import escape
+
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
-    from xml.sax.saxutils import escape
 
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter, title="Accessibility Report",
                             lang="en-US")
     styles = getSampleStyleSheet()
-    p = lambda text, style="BodyText": Paragraph(escape(text), styles[style])
+
+    def p(text: str, style: str = "BodyText") -> Paragraph:
+        return Paragraph(escape(text), styles[style])
+
     story = [
         p("Accessibility Report", "Title"),
         p(f"File: {result['input']['file_name']}"),
@@ -226,7 +230,7 @@ def build_report_pdf(result: dict) -> bytes:
 
 # --- Whole pipeline ----------------------------------------------------------
 
-def _finding(fid: str, issue: Issue, status: str, fix: str | None) -> Finding:
+def _finding(fid: str, issue: Issue, status: FindingStatus, fix: str | None) -> Finding:
     check = CHECKS_BY_ID[issue.check_id]
     return Finding(
         finding_id=fid,
@@ -266,13 +270,13 @@ def _phase3_result(data: bytes, file_name: str) -> EvaluationResult:
         "compliance_statement": "This report does not certify ADA Title II or WCAG 2.1 conformance.",
     }
     report_bytes = build_report_pdf(result)
-    return EvaluationResult(
+    return EvaluationResult.model_validate({
         **result,
-        output_pdf=OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(data),
+        "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(data),
                               modified=False, content_base64=_b64(data)),
-        report_pdf=OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
+        "report_pdf": OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
                               content_base64=_b64(report_bytes)),
-    )
+    })
 
 
 def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
@@ -336,10 +340,10 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         "compliance_statement": "This report does not certify ADA Title II or WCAG 2.1 conformance.",
     }
     report_bytes = build_report_pdf(result)
-    return EvaluationResult(
+    return EvaluationResult.model_validate({
         **result,
-        output_pdf=OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(repaired_bytes),
+        "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(repaired_bytes),
                               modified=bool(actions), content_base64=_b64(repaired_bytes)),
-        report_pdf=OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
+        "report_pdf": OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
                               content_base64=_b64(report_bytes)),
-    )
+    })

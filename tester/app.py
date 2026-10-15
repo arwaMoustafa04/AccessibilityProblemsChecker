@@ -17,12 +17,11 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
+import suite
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-
-import suite
 
 SETUP_TIMEOUT_SECONDS = 10.0
 REPORT_TIMEOUT_SECONDS = 10.0

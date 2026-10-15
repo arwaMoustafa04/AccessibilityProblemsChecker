@@ -11,6 +11,7 @@ from catalog import CHECKS
 from models import (
     CheckList,
     Error,
+    ErrorCode,
     EvaluationResult,
     Health,
     SessionRef,
@@ -53,7 +54,7 @@ async def _log_requests(request: Request, call_next):
     return response
 
 
-def _error(status: int, code: str, message: str) -> JSONResponse:
+def _error(status: int, code: ErrorCode, message: str) -> JSONResponse:
     return JSONResponse(status_code=status,
                         content=Error(error_code=code, message=message).model_dump())
 
@@ -147,4 +148,4 @@ def test_report(session_id: str = Query(..., min_length=1)):
         return _test_error(404, f"Unknown session {session_id}.")
     log.info("test-report session=%s code_covered=%s code_total=%s",
              session_id, code["covered"], code["total"])
-    return SystemReport(session_id=session_id, coverage={"code": code})
+    return SystemReport.model_validate({"session_id": session_id, "coverage": {"code": code}})
