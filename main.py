@@ -1,5 +1,8 @@
 """HTTP entry point for the PDF accessibility service (pod shared spec v0.3.0)."""
 
+import logging
+import time
+
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -20,11 +23,34 @@ from sessions import SessionExists, UnknownSession, store
 
 SPEC_VERSION = "0.3.0"
 
+# One line per event on stderr; on the server, systemd sends it to the journal
+# (read with: sudo journalctl -u pdf-system).
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("pdf-system")
+
 app = FastAPI(
     title="Pod PDF Accessibility Evaluation and Remediation API",
     version=SPEC_VERSION,
     description="Team 1 implementation of the pod's shared API (see openapi.yaml).",
 )
+
+
+@app.middleware("http")
+async def _log_requests(request: Request, call_next):
+    """Log every request with status and processing time; log crashes with a traceback."""
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        log.exception("request method=%s path=%s status=500 crashed",
+                      request.method, request.url.path)
+        raise
+    ms = (time.perf_counter() - start) * 1000
+    level = logging.WARNING if response.status_code >= 500 else logging.INFO
+    log.log(level, "request method=%s path=%s status=%d duration_ms=%.0f",
+            request.method, request.url.path, response.status_code, ms)
+    return response
 
 
 def _error(status: int, code: str, message: str) -> JSONResponse:
@@ -79,13 +105,20 @@ def process_pdf(
 ):
     """Evaluate a PDF, repair safe issues on a copy, re-validate, and return results."""
     if file is None:
+        log.info("process rejected error_code=MISSING_FILE")
         return _error(400, "MISSING_FILE", "Request must include a PDF in the 'file' field.")
     data = file.file.read(MAX_FILE_SIZE_BYTES + 1)
     try:
         with store.measure(session_id):
-            return run_pipeline(data, file.filename or "upload.pdf")
+            result = run_pipeline(data, file.filename or "upload.pdf")
     except PipelineError as err:
+        log.info("process rejected error_code=%s size_bytes=%d session=%s",
+                 err.error_code, len(data), session_id or "-")
         return _error(err.http_status, err.error_code, err.message)
+    log.info("process completed outcome=%s checks=%d findings=%d repairs=%d "
+             "size_bytes=%d session=%s", result.outcome, len(result.checks_performed),
+             len(result.findings), len(result.repairs), len(data), session_id or "-")
+    return result
 
 
 # --- Course test endpoints (system side) -------------------------------------
@@ -98,7 +131,9 @@ def test_setup(body: SetupRequest):
     try:
         store.create(body.session_id)
     except SessionExists:
+        log.info("test-setup duplicate session=%s", body.session_id)
         return _test_error(409, f"Session {body.session_id} already exists.")
+    log.info("test-setup ready session=%s", body.session_id)
     return SessionRef(session_id=body.session_id)
 
 
@@ -110,4 +145,6 @@ def test_report(session_id: str = Query(..., min_length=1)):
         code = store.report(session_id)
     except UnknownSession:
         return _test_error(404, f"Unknown session {session_id}.")
+    log.info("test-report session=%s code_covered=%s code_total=%s",
+             session_id, code["covered"], code["total"])
     return SystemReport(session_id=session_id, coverage={"code": code})
