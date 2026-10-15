@@ -129,6 +129,16 @@ Then open `http://localhost:8000/docs`, or try:
 curl -F file=@some.pdf http://localhost:8000/process
 ```
 
+## Contract conformance report
+
+Prints, for every operation in `openapi.yaml`, whether it is implemented and whether
+its success and error responses match the contract (real requests + schema checks):
+
+```bash
+python contract_report.py http://<server-ip>/system     # deployed
+python contract_report.py http://localhost:8001         # local
+```
+
 ## Run tests
 
 ```bash
