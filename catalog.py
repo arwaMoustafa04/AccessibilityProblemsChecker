@@ -2,7 +2,6 @@
 
 from models import Check, Classification, WcagLevel
 
-
 CHECKS: tuple[Check, ...] = (
     Check(
         check_id="CHK-NONTEXT",

@@ -10,7 +10,9 @@ from __future__ import annotations
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
+_coverage: Any
 try:
     import coverage as _coverage
 except ImportError:  # coverage is optional; report null counts without it

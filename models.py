@@ -3,18 +3,18 @@
 Field names are snake_case, exactly as written in the shared spec.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Classification(str, Enum):
+class Classification(StrEnum):
     AUTO_FIXABLE = "auto_fixable"
     HUMAN_REVIEW = "human_review"
 
 
-class WcagLevel(str, Enum):
+class WcagLevel(StrEnum):
     A = "A"
     AA = "AA"
 
@@ -54,6 +54,9 @@ class Location(Strict):
     description: str
 
 
+FindingStatus = Literal["fixed", "repair_failed", "needs_human_review"]
+
+
 class Finding(Strict):
     finding_id: str
     check_id: str
@@ -63,7 +66,7 @@ class Finding(Strict):
     location: Location
     evaluation_result: Literal["fail", "needs_review"]
     classification: Classification
-    status: Literal["fixed", "repair_failed", "needs_human_review"]
+    status: FindingStatus
     fix_description: str | None = None
 
 
@@ -94,7 +97,10 @@ class Summary(Strict):
     human_review_count: int
 
 
-COMPLIANCE_STATEMENT = (
+ComplianceStatement = Literal[
+    "This report does not certify ADA Title II or WCAG 2.1 conformance."
+]
+COMPLIANCE_STATEMENT: ComplianceStatement = (
     "This report does not certify ADA Title II or WCAG 2.1 conformance."
 )
 
@@ -111,26 +117,27 @@ class EvaluationResult(Strict):
     human_review_items: list[str]
     summary: Summary
     limitations: list[str]
-    compliance_statement: Literal[
-        "This report does not certify ADA Title II or WCAG 2.1 conformance."
-    ] = COMPLIANCE_STATEMENT
+    compliance_statement: ComplianceStatement = COMPLIANCE_STATEMENT
     output_pdf: OutputFile
     report_pdf: OutputFile
 
 
+ErrorCode = Literal[
+    "MISSING_FILE",
+    "INVALID_FILE_TYPE",
+    "FILE_TOO_LARGE",
+    "CORRUPTED_PDF",
+    "UNREADABLE_PDF",
+    "ENCRYPTED_PDF",
+    "PASSWORD_PROTECTED_PDF",
+    "PROCESSING_ERROR",
+    "EXTERNAL_SERVICE_UNAVAILABLE",
+]
+
+
 class Error(Strict):
     status: Literal["error"] = "error"
-    error_code: Literal[
-        "MISSING_FILE",
-        "INVALID_FILE_TYPE",
-        "FILE_TOO_LARGE",
-        "CORRUPTED_PDF",
-        "UNREADABLE_PDF",
-        "ENCRYPTED_PDF",
-        "PASSWORD_PROTECTED_PDF",
-        "PROCESSING_ERROR",
-        "EXTERNAL_SERVICE_UNAVAILABLE",
-    ]
+    error_code: ErrorCode
     message: str
 
 

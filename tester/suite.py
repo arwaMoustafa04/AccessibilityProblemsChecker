@@ -15,8 +15,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 import httpx
 import pikepdf
@@ -117,7 +117,7 @@ def json_body(resp: httpx.Response) -> dict:
     try:
         return resp.json()
     except ValueError:
-        raise Mismatch(f"Expected a JSON body; received {resp.text[:120]!r}.")
+        raise Mismatch(f"Expected a JSON body; received {resp.text[:120]!r}.") from None
 
 
 def expect_status(resp: httpx.Response, expected: int) -> None:
@@ -159,7 +159,7 @@ def decode_pdf(output_file: dict, label: str) -> bytes:
     try:
         data = base64.b64decode(output_file["content_base64"], validate=True)
     except Exception:
-        raise Mismatch(f"{label}.content_base64 is not valid Base64.")
+        raise Mismatch(f"{label}.content_base64 is not valid Base64.") from None
     if not data.startswith(b"%PDF-"):
         raise Mismatch(f"{label} does not decode to a PDF.")
     if hashlib.sha256(data).hexdigest() != output_file.get("sha256"):

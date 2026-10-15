@@ -1,0 +1,9 @@
+# Static lint rules for CI (ruff). Run locally with: ruff check .
+line-length = 110
+target-version = "py312"
+
+[lint]
+# pycodestyle, pyflakes, import order, modern syntax, likely bugs
+select = ["E", "F", "I", "UP", "B"]
+# FastAPI declares parameters as File()/Form()/Query() defaults by design
+ignore = ["B008"]

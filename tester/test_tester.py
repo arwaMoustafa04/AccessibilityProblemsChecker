@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root: sy
 
 import app as tester_app  # noqa: E402
 import suite  # noqa: E402
+
 from main import app as system_app  # noqa: E402
 
 TARGET = "http://system.test"
@@ -141,7 +142,7 @@ def test_wrong_answers_are_fail_and_crashes_are_system_errors(target) -> None:
                                                       "message": "no file"})
 
     @fake.get("/test/report")
-    def report(session_id: str):
+    def fake_report(session_id: str):
         return {"session_id": session_id,
                 "coverage": {"code": {"covered": None, "total": None,
                                       "basis": "Source lines; target instrumentation unavailable"}}}

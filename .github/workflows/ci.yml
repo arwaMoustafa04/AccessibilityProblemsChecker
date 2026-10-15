@@ -8,7 +8,34 @@ on:
   workflow_dispatch:
 
 jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: |
+          mypy --ignore-missing-imports main.py pipeline.py sessions.py models.py catalog.py contract_report.py
+          cd tester && mypy --ignore-missing-imports app.py suite.py
+
+      - name: Contract validation (OpenAPI files are valid specs)
+        run: openapi-spec-validator openapi.yaml tester/openapi.yaml
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit -r requirements.txt -r tester/requirements.txt
+
   test:
+    needs: static-checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
