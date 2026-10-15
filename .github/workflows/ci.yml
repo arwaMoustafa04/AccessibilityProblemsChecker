@@ -1,0 +1,53 @@
+name: CI
+
+# Runs on every push and pull request, so every earlier test is re-run
+# against every change (regression protection across phases).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Unit and integration tests (system + tester)
+        run: python -m pytest -v
+
+      - name: Start the system
+        run: |
+          uvicorn main:app --port 8001 --no-access-log > system.log 2>&1 &
+          for i in $(seq 1 20); do curl -fs http://localhost:8001/health && break; sleep 1; done
+
+      - name: Contract tests against the running system (openapi.yaml)
+        run: python contract_report.py http://localhost:8001
+
+      - name: Full tester suite against the running system
+        run: |
+          (cd tester && uvicorn app:app --port 8002 --no-access-log > ../tester.log 2>&1 &)
+          for i in $(seq 1 20); do curl -fs -o /dev/null http://localhost:8002/docs && break; sleep 1; done
+          SID=$(curl -fs -X POST localhost:8002/test/setup -H 'content-type: application/json' \
+                -d '{"target_url":"http://localhost:8001"}' | python -c 'import sys,json;print(json.load(sys.stdin)["session_id"])')
+          curl -fs -X POST localhost:8002/test/run -H 'content-type: application/json' \
+               -d "{\"session_id\":\"$SID\"}" > report.json
+          python - <<'PY'
+          import json, sys
+          r = json.load(open("report.json"))
+          for t in r["results"]:
+              print(t["test_id"], t["outcome"], "-", t["message"])
+          bad = [t for t in r["results"] if t["outcome"] in ("fail", "error")]
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Service logs
+        if: always()
+        run: cat system.log tester.log 2>/dev/null || true

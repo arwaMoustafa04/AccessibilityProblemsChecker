@@ -62,7 +62,8 @@ def conforms(resp: httpx.Response, status: int, schema: str) -> str | None:
     return None
 
 
-def main(base: str) -> None:
+def main(base: str) -> int:
+    """Print the table; return 1 if any response does not conform (used by CI)."""
     base = base.rstrip("/")
     c = httpx.Client(timeout=60)
     sid = str(uuid.uuid4())
@@ -100,6 +101,7 @@ def main(base: str) -> None:
           ("404", lambda: report(session_id="never-created"), 404, "TestError")], []),
     ]
 
+    nonconforming = 0
     print(f"Contract: openapi.yaml v{SPEC['info']['version']}   Target: {base}\n")
     for op, reqs, ok_cases, err_cases, untestable in ops:
         ok_diffs, partial = [], None
@@ -129,11 +131,15 @@ def main(base: str) -> None:
             err_text = "yes (" + ", ".join(n for n, *_ in err_cases) + ")"
         if untestable:
             err_text += "; not exercised: " + ", ".join(untestable)
+        nonconforming += len(ok_diffs) + len(err_diffs)
         print(f"{op} │ Requirement(s): {reqs} │ Implemented: {implemented}")
         print(f"Success responses conform: {ok_text} │ Error responses conform: {err_text}\n")
+    print("RESULT:", "all responses conform" if not nonconforming
+          else f"{nonconforming} non-conforming response(s)")
+    return 1 if nonconforming else 0
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         sys.exit(__doc__)
-    main(sys.argv[1])
+    sys.exit(main(sys.argv[1]))
