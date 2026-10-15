@@ -34,7 +34,7 @@ After=network.target
 [Service]
 User=$APP_USER
 WorkingDirectory=$APP_DIR
-ExecStart=$VENV/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --root-path /system
+ExecStart=$VENV/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --root-path /system --no-access-log
 Restart=always
 
 [Install]
@@ -49,7 +49,7 @@ After=network.target
 [Service]
 User=$APP_USER
 WorkingDirectory=$APP_DIR/tester
-ExecStart=$VENV/bin/uvicorn app:app --host 127.0.0.1 --port 8002 --root-path /tester
+ExecStart=$VENV/bin/uvicorn app:app --host 127.0.0.1 --port 8002 --root-path /tester --no-access-log
 Restart=always
 
 [Install]

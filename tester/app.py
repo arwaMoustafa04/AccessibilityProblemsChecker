@@ -9,7 +9,9 @@ Reports are kept in memory until this tester instance stops.
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 import uuid
 from typing import Literal
 from urllib.parse import urlsplit
@@ -25,6 +27,10 @@ import suite
 SETUP_TIMEOUT_SECONDS = 10.0
 REPORT_TIMEOUT_SECONDS = 10.0
 SOURCES = {"tester", "system", "communication", "unknown"}
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s %(message)s")
+log = logging.getLogger("pdf-tester")
 
 app = FastAPI(title="Team 1 Tester", version="0.3.0",
               description="Runs Team 1's test suite against a pod system (shared spec v0.3.0).")
@@ -48,6 +54,7 @@ class RunBody(BaseModel):
 
 
 def error(status: int, message: str, source: str = "tester") -> JSONResponse:
+    log.warning("error status=%d source=%s message=%s", status, source, message)
     return JSONResponse(status_code=status, content={"message": message, "source": source})
 
 
@@ -58,6 +65,7 @@ async def _bad_request(request: Request, exc: RequestValidationError) -> JSONRes
 
 @app.exception_handler(Exception)
 async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
+    log.error("crash path=%s", request.url.path, exc_info=exc)
     return error(500, f"Tester failure: {type(exc).__name__}.")
 
 
@@ -131,6 +139,7 @@ def test_setup(body: SetupBody):
 
     with _lock:
         _sessions[session_id] = Session(session_id, target_url)
+    log.info("setup ready session=%s target=%s", session_id, target_url)
     return {"session_id": session_id}
 
 
@@ -195,6 +204,8 @@ def test_run(body: RunBody):
                               "create a new session to repeat the suite.")
         session.state = "running"
 
+    log.info("run started session=%s target=%s", session.session_id, session.target_url)
+    started = time.perf_counter()
     results: list[dict] = []
     responded: list[suite.TestCase] = []  # tests that exercised the target
     client = make_client()
@@ -250,6 +261,14 @@ def test_run(body: RunBody):
     with _lock:
         session.report = report
         session.state = "ended"
+    counts = {o: sum(r["outcome"] == o for r in results) for o in ("pass", "fail", "error", "skip")}
+    log.info("run finished session=%s pass=%d fail=%d error=%d skip=%d code=%s/%s duration_ms=%.0f",
+             session.session_id, counts["pass"], counts["fail"], counts["error"], counts["skip"],
+             code["covered"], code["total"], (time.perf_counter() - started) * 1000)
+    for r in results:
+        if r["outcome"] in ("fail", "error"):
+            log.warning("test %s %s source=%s message=%s", r["test_id"], r["outcome"],
+                        r.get("source", "-"), r["message"])
     return report
 
 
