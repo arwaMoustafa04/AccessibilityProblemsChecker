@@ -102,7 +102,7 @@ def _error_doc(description: str, *examples: tuple[str, str, str]) -> dict:
         "content": {"application/json": {"examples": {
             name: {"value": {"status": "error", "error_code": code, "message": message}}
             for name, code, message in examples
-        }}},
+        }}}
     }
 
 
@@ -128,7 +128,6 @@ PROCESS_ERROR_RESPONSES: dict[int | str, dict] = {
                     ("external_service_unavailable", "EXTERNAL_SERVICE_UNAVAILABLE",
                      "A required external service is unavailable; retry later.")),
 }
-
 
 @app.post(
     "/process",
