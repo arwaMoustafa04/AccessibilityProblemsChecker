@@ -54,21 +54,28 @@ Team 3's) and returns the course's suite report. Its contract is
 | `POST /test/run` | `{"session_id": ...}` → runs T-01 to T-11, reads the target's `/test/report`, returns the full report |
 | `GET /test/report?session_id=...` | Returns the stored report (409 until the run ends) |
 
-The 11 tests (in `tester/suite.py`):
+The 14 tests (in `tester/suite.py`):
 
 | Test | Checks | Acceptance criteria |
 |---|---|---|
 | T-01 | `GET /health` returns `status: ok` | — |
 | T-02 | `GET /checks` returns the 8 agreed checks and classifications | — |
-| T-03 | A clean PDF gets 200, no repairs, both PDFs returned | AC-01, AC-08 |
-| T-04 | A PDF missing title and language gets both fixed and re-validated (**Phase 5: reported as `skip` until then**) | AC-03, AC-04, AC-05, AC-06, AC-08 |
+| T-03 | `goodAccessible.pdf` → 200, no title/language findings, no repairs, both PDFs returned | AC-01, AC-08 |
+| T-04 | `accessibilityIssues.pdf` → 200, contract-conforming result | AC-01 |
 | T-05 | No compliance claim; fixed non-certification statement | AC-09 |
-| T-06 | Non-PDF → 415 | AC-02 |
-| T-07 | No file → 400 | AC-02 |
+| T-06 | `NonPDF.docx` → 415 `INVALID_FILE_TYPE` | AC-02 |
+| T-07 | No file → 400 `MISSING_FILE` | AC-02 |
 | T-08 | Corrupted PDF → 422 | AC-02 |
-| T-09 | Password-protected PDF → 422 | AC-02 |
-| T-10 | 20 MB + 1 byte → 413 | AC-10 |
-| T-11 | Exactly 20 MB → accepted | AC-10 |
+| T-09 | `encrypted.pdf` → 422 `ENCRYPTED_PDF` | AC-02 |
+| T-10 | `passwordProtected.pdf` → 422 `PASSWORD_PROTECTED_PDF` | AC-02 |
+| T-11 | Exactly 20 MB + 1 byte → 413 | AC-10 |
+| T-12 | Exactly 20 MB → accepted | AC-10 |
+| T-13 | `accessibilityIssues.pdf`: 5 built-in issues found and classified (**Phase 4**) | AC-03, AC-04, AC-07 |
+| T-14 | `accessibilityIssues.pdf`: title and language fixed and re-validated (**Phase 5**) | AC-05, AC-06, AC-08 |
+
+Files named in the table are the team's shared test set in `tester/fixtures/` (see its
+README for each file's expected result). The no-file, corrupted and exact-size cases
+are generated in code.
 
 Tests for later phases are reported as `skip` until `CURRENT_PHASE` in
 `tester/suite.py` reaches them. In Phase 3 the suite covers 4 of 8 components and
