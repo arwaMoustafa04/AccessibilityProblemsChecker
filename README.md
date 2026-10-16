@@ -69,6 +69,16 @@ The 11 tests (in `tester/suite.py`):
 | T-09 | Password-protected PDF → 422 | AC-02 |
 | T-10 | 20 MB + 1 byte → 413 | AC-10 |
 | T-11 | Exactly 20 MB → accepted | AC-10 |
+| T-12 | `goodAccessible.pdf` → 200, no title/language findings, no repairs | AC-01, AC-08 |
+| T-13 | `accessibilityIssues.pdf` → 200, contract-conforming result | AC-01 |
+| T-14 | `NonPDF.docx` → 415 | AC-02 |
+| T-15 | `encrypted.pdf` → 422 `ENCRYPTED_PDF` | AC-02 |
+| T-16 | `passwordProtected.pdf` → 422 `PASSWORD_PROTECTED_PDF` | AC-02 |
+| T-17 | `accessibilityIssues.pdf`: 5 built-in issues found and classified (**Phase 4**) | AC-03, AC-04, AC-07 |
+| T-18 | `accessibilityIssues.pdf`: title and language fixed (**Phase 5**) | AC-05, AC-06 |
+
+T-12 to T-18 use the team's shared test set in `tester/fixtures/` (see its README
+for each file's expected result).
 
 Tests for later phases are reported as `skip` until `CURRENT_PHASE` in
 `tester/suite.py` reaches them. In Phase 3 the suite covers 4 of 8 components and

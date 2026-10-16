@@ -17,6 +17,7 @@ import hashlib
 import io
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import httpx
 import pikepdf
@@ -287,6 +288,100 @@ def t_at_limit(ctx: Context) -> str:
     return "Expected a valid PDF of exactly 20,971,520 bytes to be accepted; received 200."
 
 
+# --- Shared test set: real files made by the team (tester/fixtures/README.md) ---
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def fixture(name: str) -> bytes:
+    return (FIXTURES / name).read_bytes()
+
+
+# Issues the team built into accessibilityIssues.pdf, by agreed check (fixtures/README.md).
+# Contrast (WCAG 1.4.3) is also present but is not one of the eight agreed checks.
+ISSUES_PDF_EXPECTED = {
+    "CHK-STRUCTURE": "human_review",  # no tags/structure tree; table without header cells
+    "CHK-LANG": "auto_fixable",       # no document language
+    "CHK-TITLE": "auto_fixable",      # empty document title
+    "CHK-NONTEXT": "human_review",    # image without alt text
+    "CHK-LINK": "human_review",       # "Click here" link
+}
+
+
+def t_fixture_good(ctx: Context) -> str:
+    sent = fixture("goodAccessible.pdf")
+    body = expect_evaluation(ctx.process(sent, name="goodAccessible.pdf"), sent)
+    auto = [f.get("issue_type") for f in body["findings"]
+            if f.get("check_id") in ("CHK-TITLE", "CHK-LANG")]
+    if auto:
+        raise Mismatch("goodAccessible.pdf has a title, language and DisplayDocTitle; expected no "
+                       f"CHK-TITLE/CHK-LANG findings, received {auto}.")
+    if body["repairs"]:
+        raise Mismatch(f"Expected no repairs for goodAccessible.pdf; received {len(body['repairs'])}.")
+    decode_pdf(body["report_pdf"], "report_pdf")
+    return "Expected goodAccessible.pdf accepted (200) with no repairs; received that."
+
+
+def t_fixture_issues_accepted(ctx: Context) -> str:
+    sent = fixture("accessibilityIssues.pdf")
+    body = expect_evaluation(ctx.process(sent, name="accessibilityIssues.pdf"), sent)
+    decode_pdf(body["output_pdf"], "output_pdf")
+    decode_pdf(body["report_pdf"], "report_pdf")
+    return ("Expected accessibilityIssues.pdf accepted (200) with a contract-conforming result; "
+            "received that.")
+
+
+def t_fixture_non_pdf(ctx: Context) -> str:
+    return expect_error(ctx.process(fixture("NonPDF.docx"), name="NonPDF.docx",
+                                    content_type="application/octet-stream"),
+                        415, {"INVALID_FILE_TYPE"})
+
+
+def t_fixture_encrypted(ctx: Context) -> str:
+    return expect_error(ctx.process(fixture("encrypted.pdf"), name="encrypted.pdf"),
+                        422, {"ENCRYPTED_PDF"})
+
+
+def t_fixture_password(ctx: Context) -> str:
+    return expect_error(ctx.process(fixture("passwordProtected.pdf"), name="passwordProtected.pdf"),
+                        422, {"PASSWORD_PROTECTED_PDF"})
+
+
+def t_fixture_issues_detected(ctx: Context) -> str:
+    sent = fixture("accessibilityIssues.pdf")
+    body = expect_evaluation(ctx.process(sent, name="accessibilityIssues.pdf"), sent)
+    missing_checks = sorted(set(EXPECTED_CHECKS) - set(body["checks_performed"]))
+    if missing_checks:
+        raise Mismatch(f"Expected all 8 checks performed; missing {missing_checks}.")
+    found = {f.get("check_id"): f for f in body["findings"]}
+    for check_id, classification in ISSUES_PDF_EXPECTED.items():
+        f = found.get(check_id)
+        if f is None:
+            raise Mismatch(f"Expected a {check_id} finding in accessibilityIssues.pdf; received none.")
+        if f.get("classification") != classification:
+            raise Mismatch(f"Expected {check_id} classified {classification}; "
+                           f"received {f.get('classification')}.")
+        if classification == "human_review" and f.get("status") != "needs_human_review":
+            raise Mismatch(f"Expected {check_id} to stay needs_human_review; received {f.get('status')}.")
+    return ("Expected the 5 built-in issue types found and correctly classified; human-review "
+            "issues left unresolved; received that.")
+
+
+def t_fixture_issues_repaired(ctx: Context) -> str:
+    sent = fixture("accessibilityIssues.pdf")
+    body = expect_evaluation(ctx.process(sent, name="accessibilityIssues.pdf"), sent)
+    for check_id in ("CHK-TITLE", "CHK-LANG"):
+        mine = [f for f in body["findings"] if f.get("check_id") == check_id]
+        if not mine or any(f.get("status") != "fixed" for f in mine):
+            raise Mismatch(f"Expected {check_id} found and fixed in accessibilityIssues.pdf; "
+                           f"received {[f.get('status') for f in mine]}.")
+    repaired = decode_pdf(body["output_pdf"], "output_pdf")
+    with pikepdf.open(io.BytesIO(repaired)) as pdf:
+        if not str(pdf.Root.get("/Lang", "")).strip():
+            raise Mismatch("Repaired accessibilityIssues.pdf still has no document language.")
+    return "Expected title and language fixed in accessibilityIssues.pdf; received that."
+
+
 @dataclass(frozen=True)
 class TestCase:
     test_id: str
@@ -311,4 +406,14 @@ SUITE: list[TestCase] = [
     TestCase("T-09", t_password_protected, ("COMP-VALIDATION",), ("AC-02",)),
     TestCase("T-10", t_over_limit, ("COMP-VALIDATION",), ("AC-10",)),
     TestCase("T-11", t_at_limit, ("COMP-VALIDATION",), ("AC-10",)),
+    # Shared test set (team-made files in tester/fixtures/)
+    TestCase("T-12", t_fixture_good, ("COMP-REPORT",), ("AC-01", "AC-08")),
+    TestCase("T-13", t_fixture_issues_accepted, ("COMP-REPORT",), ("AC-01",)),
+    TestCase("T-14", t_fixture_non_pdf, ("COMP-VALIDATION",), ("AC-02",)),
+    TestCase("T-15", t_fixture_encrypted, ("COMP-VALIDATION",), ("AC-02",)),
+    TestCase("T-16", t_fixture_password, ("COMP-VALIDATION",), ("AC-02",)),
+    TestCase("T-17", t_fixture_issues_detected, ("COMP-DETECTION", "COMP-CLASSIFICATION"),
+             ("AC-03", "AC-04", "AC-07"), phase=4),
+    TestCase("T-18", t_fixture_issues_repaired,
+             ("COMP-REPAIR", "COMP-REVALIDATION"), ("AC-05", "AC-06"), phase=5),
 ]
