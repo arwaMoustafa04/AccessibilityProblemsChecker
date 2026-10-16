@@ -94,18 +94,47 @@ def list_checks() -> CheckList:
     return CheckList(checks=list(CHECKS))
 
 
-@app.post(
-    "/evaluations",
-    response_model=EvaluationResult,
-    operation_id="createEvaluation",
-    summary="Alias of POST /process",
-    responses={code: {"model": Error} for code in (400, 413, 415, 422, 500, 503)},
-)
+def _error_doc(description: str, *examples: tuple[str, str, str]) -> dict:
+    """OpenAPI docs entry for one error status, with its real error code(s) as examples."""
+    return {
+        "model": Error,
+        "description": description,
+        "content": {"application/json": {"examples": {
+            name: {"value": {"status": "error", "error_code": code, "message": message}}
+            for name, code, message in examples
+        }}},
+    }
+
+
+# Same status codes, error codes and messages as openapi.yaml and pipeline.py.
+PROCESS_ERROR_RESPONSES: dict[int | str, dict] = {
+    400: _error_doc("No file was attached",
+                    ("missing_file", "MISSING_FILE",
+                     "Request must include a PDF in the 'file' field.")),
+    413: _error_doc("File exceeds 20 MB",
+                    ("file_too_large", "FILE_TOO_LARGE", "File exceeds the 20 MB project limit.")),
+    415: _error_doc("File is not a PDF",
+                    ("invalid_file_type", "INVALID_FILE_TYPE", "Input must be a PDF file.")),
+    422: _error_doc("PDF is corrupted, unreadable, encrypted or password-protected",
+                    ("corrupted", "CORRUPTED_PDF", "PDF is corrupted and cannot be processed."),
+                    ("unreadable", "UNREADABLE_PDF", "PDF page tree cannot be read."),
+                    ("encrypted", "ENCRYPTED_PDF", "PDF is encrypted and cannot be processed."),
+                    ("password_protected", "PASSWORD_PROTECTED_PDF",
+                     "PDF is password-protected and cannot be opened.")),
+    500: _error_doc("Processing failed after the file was accepted",
+                    ("processing_error", "PROCESSING_ERROR",
+                     "Evaluation could not be completed for this file.")),
+    503: _error_doc("A required external service is unavailable",
+                    ("external_service_unavailable", "EXTERNAL_SERVICE_UNAVAILABLE",
+                     "A required external service is unavailable; retry later.")),
+}
+
+
 @app.post(
     "/process",
     response_model=EvaluationResult,
     operation_id="processPdf",
-    responses={code: {"model": Error} for code in (400, 413, 415, 422, 500, 503)},
+    responses=PROCESS_ERROR_RESPONSES,
 )
 def process_pdf(
     file: UploadFile | None = File(None),

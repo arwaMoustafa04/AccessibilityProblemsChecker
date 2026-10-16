@@ -45,9 +45,9 @@ def make_pdf(title: str | None = None, lang: str | None = None,
     return buf.getvalue()
 
 
-@pytest.fixture(params=["/process", "/evaluations"])
-def evaluation_path(request):
-    return request.param
+@pytest.fixture
+def evaluation_path():
+    return "/process"
 
 
 @pytest.fixture
@@ -156,24 +156,13 @@ def test_non_pdf_content_with_pdf_filename_is_415(post_pdf) -> None:
     assert response.json()["error_code"] == "INVALID_FILE_TYPE"
 
 
-def test_evaluation_openapi_operations_are_unique() -> None:
+def test_openapi_operation_ids_are_unique() -> None:
     schema = app.openapi()
-    operations = [operation for path in schema["paths"].values()
-                  for operation in path.values() if "operationId" in operation]
-    ids = [operation["operationId"] for operation in operations]
+    ids = [operation["operationId"] for path in schema["paths"].values()
+           for operation in path.values() if "operationId" in operation]
     assert len(ids) == len(set(ids))
-    canonical = schema["paths"]["/process"]["post"]
-    alias = schema["paths"]["/evaluations"]["post"]
-    assert canonical["operationId"] == "processPdf"
-    assert alias["operationId"] == "createEvaluation"
-    def upload_properties(operation):
-        body = operation["requestBody"]["content"]["multipart/form-data"]["schema"]
-        name = body["$ref"].rsplit("/", 1)[-1]
-        return {key: value for key, value in schema["components"]["schemas"][name].items()
-                if key != "title"}
-
-    assert upload_properties(alias) == upload_properties(canonical)
-    assert alias["responses"] == canonical["responses"]
+    assert schema["paths"]["/process"]["post"]["operationId"] == "processPdf"
+    assert "/evaluations" not in schema["paths"]
 
 
 # --- POST /process: success ---------------------------------------------------
