@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import SPEC_VERSION, app
+from pipeline import MAX_FILE_SIZE_BYTES
 
 client = TestClient(app)
 
@@ -44,9 +45,17 @@ def make_pdf(title: str | None = None, lang: str | None = None,
     return buf.getvalue()
 
 
-def post_pdf(data: bytes, name: str = "doc.pdf", **form):
-    return client.post("/process", files={"file": (name, data, "application/pdf")},
-                       data=form)
+@pytest.fixture(params=["/process", "/evaluations"])
+def evaluation_path(request):
+    return request.param
+
+
+@pytest.fixture
+def post_pdf(evaluation_path):
+    def post(data: bytes, name: str = "doc.pdf", **form):
+        return client.post(evaluation_path,
+                           files={"file": (name, data, "application/pdf")}, data=form)
+    return post
 
 
 # --- GET /health and GET /checks ---------------------------------------------
@@ -80,20 +89,20 @@ def test_endpoint_methods_are_read_only(path: str) -> None:
 
 # --- POST /process: errors ----------------------------------------------------
 
-def test_missing_file_is_400() -> None:
-    response = client.post("/process", data={})
+def test_missing_file_is_400(evaluation_path) -> None:
+    response = client.post(evaluation_path, data={})
     assert response.status_code == 400
     assert response.json()["error_code"] == "MISSING_FILE"
 
 
-def test_non_pdf_is_415() -> None:
+def test_non_pdf_is_415(post_pdf) -> None:
     response = post_pdf(b"PK\x03\x04 this is a docx", name="doc.docx")
     assert response.status_code == 415
     assert response.json() == {"status": "error", "error_code": "INVALID_FILE_TYPE",
                                "message": "Input must be a PDF file."}
 
 
-def test_too_large_is_413() -> None:
+def test_too_large_is_413(post_pdf) -> None:
     data = b"%PDF-1.7\n" + b"0" * (20_971_520 - 8)
     assert len(data) == 20_971_521
     response = post_pdf(data)
@@ -101,32 +110,99 @@ def test_too_large_is_413() -> None:
     assert response.json()["error_code"] == "FILE_TOO_LARGE"
 
 
-def test_corrupted_pdf_is_422() -> None:
+def test_corrupted_pdf_is_422(post_pdf) -> None:
     response = post_pdf(b"%PDF-1.7\nthis is not really a pdf")
     assert response.status_code == 422
     assert response.json()["error_code"] == "CORRUPTED_PDF"
 
 
-def test_password_protected_pdf_is_422() -> None:
+def test_password_protected_pdf_is_422(post_pdf) -> None:
     response = post_pdf(make_pdf(encrypt=True, user_password="secret"))
     assert response.status_code == 422
     assert response.json()["error_code"] == "PASSWORD_PROTECTED_PDF"
 
 
-def test_encrypted_pdf_is_422() -> None:
+def test_encrypted_pdf_is_422(post_pdf) -> None:
     response = post_pdf(make_pdf(encrypt=True))
     assert response.status_code == 422
     assert response.json()["error_code"] == "ENCRYPTED_PDF"
 
 
+def test_empty_file_is_400(post_pdf) -> None:
+    response = post_pdf(b"")
+    assert response.status_code == 400
+    assert response.json() == {"status": "error", "error_code": "MISSING_FILE",
+                               "message": "Request must include a PDF in the 'file' field."}
+
+
+def test_exact_size_limit_is_accepted(post_pdf) -> None:
+    original = make_pdf()
+    padded = original + b"\n%" + b" " * (MAX_FILE_SIZE_BYTES - len(original) - 2)
+    assert len(padded) == MAX_FILE_SIZE_BYTES
+    response = post_pdf(padded)
+    assert response.status_code == 200
+    assert response.json()["input"]["size_bytes"] == MAX_FILE_SIZE_BYTES
+
+
+def test_pdf_content_overrides_filename_and_mime_type(evaluation_path) -> None:
+    response = client.post(evaluation_path,
+                           files={"file": ("doc.txt", make_pdf(), "text/plain")})
+    assert response.status_code == 200
+
+
+def test_non_pdf_content_with_pdf_filename_is_415(post_pdf) -> None:
+    response = post_pdf(b"not a PDF", name="doc.pdf")
+    assert response.status_code == 415
+    assert response.json()["error_code"] == "INVALID_FILE_TYPE"
+
+
+def test_evaluation_openapi_operations_are_unique() -> None:
+    schema = app.openapi()
+    operations = [operation for path in schema["paths"].values()
+                  for operation in path.values() if "operationId" in operation]
+    ids = [operation["operationId"] for operation in operations]
+    assert len(ids) == len(set(ids))
+    canonical = schema["paths"]["/process"]["post"]
+    alias = schema["paths"]["/evaluations"]["post"]
+    assert canonical["operationId"] == "processPdf"
+    assert alias["operationId"] == "createEvaluation"
+    def upload_properties(operation):
+        body = operation["requestBody"]["content"]["multipart/form-data"]["schema"]
+        name = body["$ref"].rsplit("/", 1)[-1]
+        return {key: value for key, value in schema["components"]["schemas"][name].items()
+                if key != "title"}
+
+    assert upload_properties(alias) == upload_properties(canonical)
+    assert alias["responses"] == canonical["responses"]
+
+
 # --- POST /process: success ---------------------------------------------------
 
-def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged() -> None:
+def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged(post_pdf) -> None:
     """Phase 3 (default): valid PDFs get a well-formed result with no checks or repairs."""
     original = make_pdf()  # missing title and language, but nothing should be fixed yet
     response = post_pdf(original, name="annual_report.pdf")
     assert response.status_code == 200
     body = response.json()
+    assert set(body) == {
+        "evaluation_id", "status", "input", "outcome", "checks_performed", "findings",
+        "repairs", "new_issues_after_repair", "human_review_items", "summary", "limitations",
+        "compliance_statement", "output_pdf", "report_pdf",
+    }
+    uuid.UUID(body["evaluation_id"])
+    assert body["input"] == {"file_name": "annual_report.pdf",
+                             "sha256": hashlib.sha256(original).hexdigest(),
+                             "size_bytes": len(original)}
+    assert body["new_issues_after_repair"] == body["human_review_items"] == []
+    assert body["compliance_statement"] == (
+        "This report does not certify ADA Title II or WCAG 2.1 conformance.")
+    for key in ("output_pdf", "report_pdf"):
+        artifact = body[key]
+        content = base64.b64decode(artifact["content_base64"], validate=True)
+        assert artifact["media_type"] == "application/pdf"
+        assert artifact["sha256"] == hashlib.sha256(content).hexdigest()
+        with pikepdf.open(io.BytesIO(content)) as pdf:
+            assert len(pdf.pages) > 0
     assert body["status"] == "completed"
     assert body["outcome"] == "completed_no_repairs"
     assert body["checks_performed"] == []
@@ -145,7 +221,7 @@ def title_lang_on(monkeypatch):
     monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
 
 
-def test_pdf_missing_title_and_language_is_repaired(title_lang_on) -> None:
+def test_pdf_missing_title_and_language_is_repaired(title_lang_on, post_pdf) -> None:
     original = make_pdf()
     original_hash = hashlib.sha256(original).hexdigest()
     response = post_pdf(original, name="annual_report.pdf")
@@ -180,7 +256,7 @@ def test_pdf_missing_title_and_language_is_repaired(title_lang_on) -> None:
     assert hashlib.sha256(original).hexdigest() == original_hash
 
 
-def test_clean_pdf_is_returned_unchanged(title_lang_on) -> None:
+def test_clean_pdf_is_returned_unchanged(title_lang_on, post_pdf) -> None:
     original = make_pdf(title="Budget", lang="en-US", display_title=True)
     body = post_pdf(original).json()
     assert body["outcome"] == "completed_no_repairs"
@@ -191,7 +267,7 @@ def test_clean_pdf_is_returned_unchanged(title_lang_on) -> None:
 
 # --- Course test endpoints ----------------------------------------------------
 
-def test_setup_then_report_coverage() -> None:
+def test_setup_then_report_coverage(post_pdf) -> None:
     sid = str(uuid.uuid4())
     response = client.post("/test/setup", json={"session_id": sid, "setup": {}})
     assert response.status_code == 201

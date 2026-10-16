@@ -13,6 +13,7 @@ Project API (agreed with Team 3):
 | `GET /health` | `{"status": "ok", "spec_version": "0.3.0"}` |
 | `GET /checks` | `{"checks": [...]}`, the 8 agreed checks with `check_id`, `name`, `wcag_criterion`, `wcag_level`, `classification` |
 | `POST /process` | Upload a PDF as the multipart field `file` (plus optional `session_id`). Returns the `EvaluationResult` JSON with the repaired PDF and report PDF in Base64 |
+| `POST /evaluations` | Alias of `/process`, with identical upload validation, optional `session_id` coverage, and JSON responses. `/process` remains the canonical shared-contract endpoint |
 
 Course test endpoints (required on every system):
 

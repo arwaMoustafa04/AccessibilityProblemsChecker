@@ -95,6 +95,13 @@ def list_checks() -> CheckList:
 
 
 @app.post(
+    "/evaluations",
+    response_model=EvaluationResult,
+    operation_id="createEvaluation",
+    summary="Alias of POST /process",
+    responses={code: {"model": Error} for code in (400, 413, 415, 422, 500, 503)},
+)
+@app.post(
     "/process",
     response_model=EvaluationResult,
     operation_id="processPdf",
