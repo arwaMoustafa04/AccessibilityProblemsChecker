@@ -57,7 +57,7 @@ def test_full_suite_passes_against_our_system(target) -> None:
     check_report_format(report)
     assert report["session_id"] == sid and report["target_url"] == TARGET
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-    for later in ("T-04", "T-17", "T-18"):  # Phase 4-5 tests
+    for later in ("T-13", "T-14"):  # Phase 4-5 tests
         assert outcomes.pop(later) == "skip"
     assert set(outcomes.values()) == {"pass"}
     cov = report["coverage"]
@@ -188,6 +188,6 @@ def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
     report = tester.post("/test/run", json={"session_id": sid}).json()
     check_report_format(report)
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-    # The six human-review checks are Phase 4 work, so full detection (T-17) still fails.
-    assert outcomes.pop("T-17") == "fail"
+    # The six human-review checks are Phase 4 work, so full detection (T-13) still fails.
+    assert outcomes.pop("T-13") == "fail"
     assert set(outcomes.values()) == {"pass"}
