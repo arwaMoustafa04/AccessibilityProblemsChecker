@@ -68,9 +68,23 @@ def main(base: str) -> int:
     c = httpx.Client(timeout=60)
     sid = str(uuid.uuid4())
 
-    def process(data, name="t.pdf"):
+    def process(data, name="t.pdf", path="/process"):
         files = {"file": (name, data, "application/pdf")} if data is not None else None
-        return c.post(f"{base}/process", files=files, data={"session_id": sid})
+        return c.post(f"{base}{path}", files=files, data={"session_id": sid})
+
+    def upload_op(path: str, reqs: str):
+        """Success and error cases for the upload endpoint."""
+        def call(data, name="t.pdf"):
+            return lambda: process(data, name, path)
+        return (f"POST {path}", reqs,
+                [("200", call(clean_pdf()), 200, "EvaluationResult"),
+                 ("200 @20 MB", call(pdf_of_exact_size(20_971_520)), 200, "EvaluationResult")],
+                [("400", call(None), 400, "Error"),
+                 ("413", call(pdf_of_exact_size(20_971_521)), 413, "Error"),
+                 ("415", call(b"PK\x03\x04 not a pdf", "a.docx"), 415, "Error"),
+                 ("422 corrupted", call(b"%PDF-1.7\n1 0 obj << /Broken"), 422, "Error"),
+                 ("422 password", call(make_pdf(user_password="x")), 422, "Error")],
+                ["500/503 (cannot be triggered from outside)"])
 
     setup = lambda body: c.post(f"{base}/test/setup", json=body)  # noqa: E731
     report = lambda **q: c.get(f"{base}/test/report", params=q)  # noqa: E731
@@ -86,15 +100,7 @@ def main(base: str) -> int:
          [("400", lambda: setup({}), 400, "TestError"),
           ("409", lambda: setup({"session_id": sid}), 409, "TestError")],
          ["500 (no failure path to trigger)"]),
-        ("POST /process", "REQ-01 to REQ-17",
-         [("200", lambda: process(clean_pdf()), 200, "EvaluationResult"),
-          ("200 @20 MB", lambda: process(pdf_of_exact_size(20_971_520)), 200, "EvaluationResult")],
-         [("400", lambda: process(None), 400, "Error"),
-          ("413", lambda: process(pdf_of_exact_size(20_971_521)), 413, "Error"),
-          ("415", lambda: process(b"PK\x03\x04 not a pdf", "a.docx"), 415, "Error"),
-          ("422 corrupted", lambda: process(b"%PDF-1.7\n1 0 obj << /Broken"), 422, "Error"),
-          ("422 password", lambda: process(make_pdf(user_password="x")), 422, "Error")],
-         ["500/503 (cannot be triggered from outside)"]),
+        upload_op("/process", "REQ-01 to REQ-17"),
         ("GET /test/report", "course testing interface (REQ-16)",
          [("200", lambda: report(session_id=sid), 200, "SystemReport")],
          [("400", lambda: report(), 400, "TestError"),

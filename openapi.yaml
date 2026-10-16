@@ -7,7 +7,6 @@ info:
     Each team implements this contract independently. Tests target a team by its base URL.
 
     Project API (pod-defined): GET /health, GET /checks, POST /process.
-    POST /evaluations is an alias of the canonical POST /process endpoint.
     Course test endpoints (required on every system): POST /test/setup, GET /test/report.
 
     State: PDFs are never stored; every /process request is independent and no reset
@@ -224,32 +223,6 @@ paths:
                 compliance_statement: This report does not certify ADA Title II or WCAG 2.1 conformance.
                 output_pdf: {file_name: example_missing_language_repaired.pdf, media_type: application/pdf, sha256: 71ac...0d, modified: true, content_base64: JVBERi0xLjcK...}
                 report_pdf: {file_name: example_missing_language_report.pdf, media_type: application/pdf, sha256: c3d2...9f, content_base64: JVBERi0xLjcK...}
-        '400':
-          $ref: '#/components/responses/MissingFile'
-        '413':
-          $ref: '#/components/responses/FileTooLarge'
-        '415':
-          $ref: '#/components/responses/InvalidFileType'
-        '422':
-          $ref: '#/components/responses/UnprocessablePdf'
-        '500':
-          $ref: '#/components/responses/ProcessingError'
-        '503':
-          $ref: '#/components/responses/ExternalServiceUnavailable'
-
-  /evaluations:
-    post:
-      operationId: createEvaluation
-      summary: Alias of POST /process
-      description: >
-        Accepts the same multipart file and optional session_id as POST /process,
-        with identical validation, session coverage, pipeline behavior, and JSON
-        responses. POST /process remains the canonical shared-contract endpoint.
-      requestBody:
-        $ref: '#/paths/~1process/post/requestBody'
-      responses:
-        '200':
-          $ref: '#/paths/~1process/post/responses/200'
         '400':
           $ref: '#/components/responses/MissingFile'
         '413':

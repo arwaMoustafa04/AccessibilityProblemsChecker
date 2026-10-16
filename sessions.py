@@ -1,7 +1,7 @@
 """Test sessions for the course's /test/setup and /test/report endpoints.
 
 PDFs are never stored. The only state kept between requests is, per session ID,
-which source lines of this service ran while handling that session's /process or /evaluations
+which source lines of this service ran while handling that session's /process
 requests. Sessions live in memory and are cleared when the service restarts.
 """
 
@@ -24,7 +24,7 @@ MEASURED_FILES = sorted(
     if not p.name.startswith("test_") and p.name != "conftest.py"
 )
 BASIS = ("Source lines of this service's Python modules executed while handling "
-         "this session's POST /process or POST /evaluations requests since setup (coverage.py)")
+         "this session's POST /process requests since setup (coverage.py)")
 UNAVAILABLE_BASIS = "Source lines; target instrumentation unavailable (coverage.py not installed)"
 
 

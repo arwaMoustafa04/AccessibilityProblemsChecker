@@ -1,1 +1,7 @@
+# Shell scripts must keep Unix line endings (they run on the Linux server)
 *.sh text eol=lf
+
+# Test files are binary: Git must never convert their line endings
+# (on Windows, autocrlf otherwise corrupts the PDFs and changes their checksums)
+*.pdf binary
+*.docx binary
