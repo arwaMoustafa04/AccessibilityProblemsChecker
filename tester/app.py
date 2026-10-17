@@ -20,7 +20,7 @@ import httpx
 import suite
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 SETUP_TIMEOUT_SECONDS = 10.0
@@ -96,6 +96,11 @@ def _check_target_url(url: str) -> str | None:
 
 
 # --- POST /test/setup --------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+def open_docs() -> RedirectResponse:
+    """Opening the bare base URL in a browser shows the interactive API docs."""
+    return RedirectResponse(url="docs")
 
 @app.post("/test/setup", status_code=201)
 def test_setup(body: SetupBody):
