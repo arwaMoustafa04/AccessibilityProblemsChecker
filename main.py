@@ -5,7 +5,7 @@ import time
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from catalog import CHECKS
 from models import (
@@ -81,6 +81,11 @@ async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
 
 
 # --- Project API (pod shared spec) -------------------------------------------
+
+@app.get("/", include_in_schema=False)
+def open_docs() -> RedirectResponse:
+    """Opening the bare base URL in a browser shows the interactive API docs."""
+    return RedirectResponse(url="docs")
 
 @app.get("/health", response_model=Health, operation_id="getHealth")
 def get_health() -> Health:
