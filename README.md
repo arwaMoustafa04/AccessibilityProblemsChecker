@@ -24,6 +24,12 @@ trailing slash. Maximum times: system `/test/setup` 10 s; tester `/test/setup` 1
 tester `/test/run` at most 14 project calls × 60 s plus 10 s for the target's
 `/test/report` (≈ 15 min worst case); a normal run against our system takes a few seconds.
 
+## Architecture (Phase 3)
+
+![System architecture, Phase 3](model.png)
+
+![POST /process flow, Phase 3](model1.png)
+
 ## System interface
 
 The contract is `openapi.yaml` (OpenAPI 3.0.3, spec v0.3.0). Both pod teams build to
