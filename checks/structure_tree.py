@@ -48,9 +48,11 @@ def is_tagged(ctx: CheckContext) -> bool:
     return "/StructTreeRoot" in root and marked
 
 
-def _resolve_role(tag: str, role_map: pikepdf.Dictionary | None) -> str:
+def _resolve_role(tag: str, role_map: object) -> str:
+    if not isinstance(role_map, pikepdf.Dictionary):
+        return tag  # no RoleMap (or a malformed one): the tag is used as written
     seen = set()
-    while role_map is not None and tag in role_map and tag not in seen:
+    while tag in role_map and tag not in seen:
         seen.add(tag)
         mapped = role_map[tag]
         if not isinstance(mapped, pikepdf.Name):
