@@ -54,7 +54,7 @@ class Location(Strict):
     description: str
 
 
-FindingStatus = Literal["fixed", "repair_failed", "needs_human_review"]
+FindingStatus = Literal["detected", "fixed", "repair_failed", "needs_human_review"]
 
 
 class Finding(Strict):
@@ -130,6 +130,7 @@ ErrorCode = Literal[
     "UNREADABLE_PDF",
     "ENCRYPTED_PDF",
     "PASSWORD_PROTECTED_PDF",
+    "INVALID_REQUEST",
     "PROCESSING_ERROR",
     "EXTERNAL_SERVICE_UNAVAILABLE",
 ]

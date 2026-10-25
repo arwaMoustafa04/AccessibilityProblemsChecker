@@ -167,9 +167,9 @@ def test_openapi_operation_ids_are_unique() -> None:
 
 # --- POST /process: success ---------------------------------------------------
 
-def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged(post_pdf) -> None:
-    """Phase 3 (default): valid PDFs get a well-formed result with no checks or repairs."""
-    original = make_pdf()  # missing title and language, but nothing should be fixed yet
+def test_phase4_detects_and_classifies_without_repairing(post_pdf) -> None:
+    """Phase 4 (default): checks run, findings are classified, nothing is repaired."""
+    original = make_pdf()  # missing title, DisplayDocTitle and language
     response = post_pdf(original, name="annual_report.pdf")
     assert response.status_code == 200
     body = response.json()
@@ -182,7 +182,22 @@ def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged(post_pdf) -> None:
     assert body["input"] == {"file_name": "annual_report.pdf",
                              "sha256": hashlib.sha256(original).hexdigest(),
                              "size_bytes": len(original)}
-    assert body["new_issues_after_repair"] == body["human_review_items"] == []
+    assert body["status"] == "completed"
+    assert body["outcome"] == "completed_no_repairs"
+    # Registered checks run in catalog order; the others are listed as not performed.
+    assert body["checks_performed"] == ["CHK-TITLE", "CHK-HEADINGS", "CHK-LANG"]
+    assert any("not implemented yet" in line and "CHK-NONTEXT" in line
+               for line in body["limitations"])
+    assert {f["issue_type"] for f in body["findings"]} == {
+        "missing_document_title", "display_doc_title_not_set", "missing_document_language"}
+    for f in body["findings"]:
+        assert f["classification"] == "auto_fixable"
+        assert f["status"] == "detected"
+        assert f["evaluation_result"] == "fail"
+        assert f["fix_description"]
+    assert body["repairs"] == [] and body["new_issues_after_repair"] == []
+    assert body["human_review_items"] == []
+    assert body["summary"] == {"total_issues": 3, "fixed_count": 0, "human_review_count": 0}
     assert body["compliance_statement"] == (
         "This report does not certify ADA Title II or WCAG 2.1 conformance.")
     for key in ("output_pdf", "report_pdf"):
@@ -192,44 +207,55 @@ def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged(post_pdf) -> None:
         assert artifact["sha256"] == hashlib.sha256(content).hexdigest()
         with pikepdf.open(io.BytesIO(content)) as pdf:
             assert len(pdf.pages) > 0
-    assert body["status"] == "completed"
-    assert body["outcome"] == "completed_no_repairs"
-    assert body["checks_performed"] == []
-    assert body["findings"] == [] and body["repairs"] == []
-    assert body["summary"] == {"total_issues": 0, "fixed_count": 0, "human_review_count": 0}
-    assert "Phase 4" in body["limitations"][0]
     assert body["output_pdf"]["modified"] is False
     assert base64.b64decode(body["output_pdf"]["content_base64"]) == original
-    assert base64.b64decode(body["report_pdf"]["content_base64"]).startswith(b"%PDF-")
+
+
+def test_human_review_findings_are_listed_for_review(post_pdf) -> None:
+    from test_checks import tagged_pdf
+    body = post_pdf(tagged_pdf(["/H1", "/H3"])).json()
+    skipped = [f for f in body["findings"] if f["issue_type"] == "heading_level_skipped"]
+    assert len(skipped) == 1
+    f = skipped[0]
+    assert (f["check_id"], f["classification"], f["status"]) == (
+        "CHK-HEADINGS", "human_review", "needs_human_review")
+    assert f["location"]["page"] == 1 and f["location"]["description"] == "Page 1"
+    assert body["human_review_items"] == [f["finding_id"]]
+    assert body["summary"]["human_review_count"] == 1
+
+
+def test_crashing_check_is_reported_not_500(post_pdf, monkeypatch) -> None:
+    import checks
+
+    def broken(ctx):
+        raise RuntimeError("boom")
+    monkeypatch.setitem(checks.CHECK_FUNCTIONS, "CHK-HEADINGS", broken)
+    body = post_pdf(make_pdf()).json()
+    assert "CHK-HEADINGS" not in body["checks_performed"]
+    assert any("CHK-HEADINGS could not be completed" in line for line in body["limitations"])
 
 
 @pytest.fixture
-def title_lang_on(monkeypatch):
-    """Turn on the early Phase 4-5 work (off by default in Phase 3)."""
+def repairs_on(monkeypatch):
+    """Turn on the Phase 5 repair path (off by default in Phase 4)."""
     import pipeline
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
 
 
-def test_pdf_missing_title_and_language_is_repaired(title_lang_on, post_pdf) -> None:
+def test_pdf_missing_title_and_language_is_repaired(repairs_on, post_pdf) -> None:
     original = make_pdf()
     original_hash = hashlib.sha256(original).hexdigest()
     response = post_pdf(original, name="annual_report.pdf")
     assert response.status_code == 200
     body = response.json()
 
-    assert body["status"] == "completed"
     assert body["outcome"] == "completed_with_repairs"
-    assert body["input"] == {"file_name": "annual_report.pdf", "sha256": original_hash,
-                             "size_bytes": len(original)}
-    assert body["checks_performed"] == ["CHK-TITLE", "CHK-LANG"]
     assert {f["issue_type"] for f in body["findings"]} == {
         "missing_document_title", "display_doc_title_not_set", "missing_document_language"}
     assert all(f["status"] == "fixed" for f in body["findings"])
     assert all(r["validation_result"] == "passed" for r in body["repairs"])
     assert body["new_issues_after_repair"] == []
     assert body["summary"] == {"total_issues": 3, "fixed_count": 3, "human_review_count": 0}
-    assert body["compliance_statement"] == (
-        "This report does not certify ADA Title II or WCAG 2.1 conformance.")
 
     repaired = base64.b64decode(body["output_pdf"]["content_base64"])
     assert body["output_pdf"]["modified"] is True
@@ -238,20 +264,77 @@ def test_pdf_missing_title_and_language_is_repaired(title_lang_on, post_pdf) -> 
         assert str(pdf.docinfo["/Title"]) == "annual report"
         assert str(pdf.Root.Lang) == "en-US"
         assert pdf.Root.ViewerPreferences.DisplayDocTitle is True
-
-    report = base64.b64decode(body["report_pdf"]["content_base64"])
-    assert report.startswith(b"%PDF-")
     # The upload itself was never modified (REQ-07, REQ-17).
     assert hashlib.sha256(original).hexdigest() == original_hash
 
 
-def test_clean_pdf_is_returned_unchanged(title_lang_on, post_pdf) -> None:
-    original = make_pdf(title="Budget", lang="en-US", display_title=True)
-    body = post_pdf(original).json()
-    assert body["outcome"] == "completed_no_repairs"
+def test_clean_pdf_has_no_findings_and_is_unchanged(post_pdf) -> None:
+    from test_checks import clean_pdf
+    original = clean_pdf()
+    body = post_pdf(original, name="budget.pdf").json()
     assert body["findings"] == [] and body["repairs"] == []
+    assert body["outcome"] == "completed_no_repairs"
     assert body["output_pdf"]["modified"] is False
     assert base64.b64decode(body["output_pdf"]["content_base64"]) == original
+
+
+# --- POST /process: output=zip ------------------------------------------------
+
+def _zip(response):
+    import zipfile
+    return zipfile.ZipFile(io.BytesIO(response.content))
+
+
+def test_zip_output_contains_all_results(post_pdf) -> None:
+    import json
+    original = make_pdf()
+    response = post_pdf(original, name="annual_report.pdf", output="zip")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="annual_report_results.zip"')
+    zf = _zip(response)
+    assert sorted(zf.namelist()) == ["annual_report_repaired.pdf", "annual_report_report.pdf",
+                                     "original.pdf", "result.json"]
+    assert zf.read("original.pdf") == original  # byte for byte
+    assert zf.read("annual_report_report.pdf").startswith(b"%PDF-")
+
+    result = json.loads(zf.read("result.json"))
+    for key in ("output_pdf", "report_pdf"):
+        assert "content_base64" not in result[key]
+        content = zf.read(result[key]["file_name"])
+        assert hashlib.sha256(content).hexdigest() == result[key]["sha256"]
+    # Same result as the JSON response (apart from the per-request evaluation ID).
+    as_json = post_pdf(original, name="annual_report.pdf").json()
+    for key in ("checks_performed", "findings", "summary", "limitations", "input", "outcome"):
+        assert result[key] == as_json[key]
+
+
+def test_json_is_the_default_and_explicit_json_works(post_pdf) -> None:
+    for form in ({}, {"output": "json"}):
+        response = post_pdf(make_pdf(), **form)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/json"
+
+
+def test_invalid_output_value_is_400(post_pdf) -> None:
+    response = post_pdf(make_pdf(), output="pdf")
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "INVALID_REQUEST"
+
+
+def test_zip_request_with_bad_file_still_returns_json_error(post_pdf) -> None:
+    response = post_pdf(b"not a PDF", name="a.docx", output="zip")
+    assert response.status_code == 415
+    assert response.json()["error_code"] == "INVALID_FILE_TYPE"
+
+
+def test_zip_name_is_safe() -> None:
+    from types import SimpleNamespace
+
+    from pipeline import results_zip_name
+    fake = SimpleNamespace(input=SimpleNamespace(file_name='my report "final" (v2).pdf'))
+    assert results_zip_name(fake) == "my_report_final_v2_results.zip"
 
 
 # --- Course test endpoints ----------------------------------------------------
