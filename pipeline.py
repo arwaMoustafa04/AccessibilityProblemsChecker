@@ -4,7 +4,7 @@ Stages (shared spec, POST /process description):
 RECEIVED -> VALIDATED -> EVALUATED -> CLASSIFIED -> REPAIRED -> REVALIDATED -> REPORTED
 
 Phase 4 (current): input validation, then every registered check in checks/
-(CHK-TITLE, CHK-LANG and CHK-HEADINGS so far; the rest are added by teammates).
+(Person 2 and Person 3 checks; Person 1 checks are added by their owner).
 Findings are classified from catalog.py. No repairs: auto-fixable findings are
 reported with status "detected" and the PDF is returned unchanged. Checks that
 are not implemented yet are listed in limitations, so an empty findings list is
@@ -195,6 +195,8 @@ def build_report_pdf(result: dict) -> bytes:
         for f in result["findings"]:
             story.append(p(f"{f['finding_id']} - {f['check_id']} (WCAG {f['wcag_criterion']}): "
                            f"{f['location']['description']}. Status: {f['status']}."))
+            if f.get("fix_description"):
+                story.append(p(f["fix_description"]))
     elif result["checks_performed"]:
         story.append(p("No issues found by the checks performed."))
     else:
@@ -280,6 +282,11 @@ def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool) -> list[str]:
         notes.append("Automatic repair is not enabled in this version (planned for Phase 5): "
                      "auto-fixable findings are reported as detected and the PDF is "
                      "returned unchanged.")
+    notes.append("CHK-SENSORY and CHK-COLOR use English text cues; CHK-COLOR also flags "
+                 "multicolor vector graphics. No OCR or raster-image color analysis is performed. "
+                 "CHK-LINK inspects annotations and labels without visiting destinations. "
+                 "These heuristics can miss issues and flag acceptable content; no finding "
+                 "does not establish conformance. Human review of context is required.")
     notes.append("Human-review findings are never repaired automatically.")
     notes.append("Automated checks cannot confirm every WCAG 2.1 requirement; a person "
                  "should review the document.")

@@ -232,9 +232,8 @@ def test_registry_runs_in_catalog_order_and_reports_missing_checks() -> None:
     data = clean_pdf()
     with pikepdf.open(io.BytesIO(data)) as pdf:
         run = run_checks(CheckContext(data, "a.pdf", pdf))
-    assert run.performed == ["CHK-TITLE", "CHK-HEADINGS", "CHK-LANG"]
-    assert set(run.not_implemented) == {"CHK-NONTEXT", "CHK-STRUCTURE", "CHK-SENSORY",
-                                        "CHK-COLOR", "CHK-LINK"}
+    assert run.performed == ["CHK-SENSORY", "CHK-COLOR", "CHK-TITLE", "CHK-LINK", "CHK-HEADINGS", "CHK-LANG"]
+    assert set(run.not_implemented) == {"CHK-NONTEXT", "CHK-STRUCTURE"}
 
 
 def test_registry_rejects_issue_for_another_check() -> None:

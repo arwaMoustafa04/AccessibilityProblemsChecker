@@ -185,7 +185,8 @@ def test_phase4_detects_and_classifies_without_repairing(post_pdf) -> None:
     assert body["status"] == "completed"
     assert body["outcome"] == "completed_no_repairs"
     # Registered checks run in catalog order; the others are listed as not performed.
-    assert body["checks_performed"] == ["CHK-TITLE", "CHK-HEADINGS", "CHK-LANG"]
+    assert body["checks_performed"] == [
+        "CHK-SENSORY", "CHK-COLOR", "CHK-TITLE", "CHK-LINK", "CHK-HEADINGS", "CHK-LANG"]
     assert any("not implemented yet" in line and "CHK-NONTEXT" in line
                for line in body["limitations"])
     assert {f["issue_type"] for f in body["findings"]} == {
