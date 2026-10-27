@@ -27,7 +27,8 @@ API_PROXY_TARGET=http://3.15.117.84/system npm run dev
 To call an API directly (e.g. in a production build), set `VITE_API_URL` to its base
 URL at build time; that server must then allow CORS from the UI's origin.
 
-The API currently runs CHK-TITLE, CHK-LANG and CHK-HEADINGS; the other five checks
+The API currently runs six checks: CHK-TITLE, CHK-LANG and CHK-HEADINGS (Person 3) and
+CHK-SENSORY, CHK-COLOR and CHK-LINK (Person 2). CHK-NONTEXT and CHK-STRUCTURE
 are shown as "not performed" and listed under Limitations. The results screen can
 download the report PDF and the output PDF that `/process` returns.
 

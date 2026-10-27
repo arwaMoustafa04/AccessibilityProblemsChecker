@@ -19,7 +19,20 @@ export const STATUS_LABELS = {
   needs_human_review: 'Needs Human Review',
 }
 
+export const EVALUATION_LABELS = {
+  fail: 'Fail',
+  needs_review: 'Needs review',
+}
+
 export const label = (map, value) => map[value] ?? value
+
+// The API appends " Suggested fix: ..." to fix_description; show it as its own field.
+export const splitSuggestion = (text) => {
+  const marker = ' Suggested fix: '
+  const at = (text ?? '').indexOf(marker)
+  if (at === -1) return { details: text, suggestion: null }
+  return { details: text.slice(0, at), suggestion: text.slice(at + marker.length) }
+}
 
 // The API's issue_type is snake_case (e.g. "title_missing"); show it as words.
 export const issueLabel = (issueType) => {
