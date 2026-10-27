@@ -2,7 +2,15 @@
 
 Team 1 (West Lafayette, Pod D) implementation of the pod's shared PDF accessibility
 service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WCAG 2.1 AA).
-This README describes the system **as delivered at the end of Phase 3**.
+This branch extends `Arwa/phase4` with Person 2's sensory, color and link checks.
+`POST /process` now runs six registered checks: Person 2's three plus title,
+language and headings from Person 3. Person 1's non-text and structure checks
+remain unimplemented and are listed in response limitations. Automatic repair
+remains disabled by default. This change does not deploy to the public server.
+
+See [Person 2 fixtures and tests](test_fixtures/person2/README.md) for the detection
+rules, limitations and commands. The Phase 3 deployment history below describes
+the earlier delivered increment, not the six-check behavior of this branch.
 
 ## Deployed services
 

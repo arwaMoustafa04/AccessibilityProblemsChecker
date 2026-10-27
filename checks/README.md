@@ -9,7 +9,16 @@ level and classification (auto_fixable / human_review) come from `catalog.py`.
 | CHK-TITLE (2.4.2) | `title.py` | pikepdf (Info, XMP, ViewerPreferences), PyMuPDF metadata, veraPDF 7.1 |
 | CHK-LANG (3.1.1) | `lang.py` | pikepdf (catalog and element /Lang), PyMuPDF (pages with text), veraPDF 7.2 |
 | CHK-HEADINGS (2.4.6) | `headings.py` | pikepdf (structure tree, RoleMap, form fields), PyMuPDF (font sizes), veraPDF 7.4 |
-| CHK-NONTEXT, CHK-STRUCTURE, CHK-SENSORY, CHK-COLOR, CHK-LINK | to add | |
+| CHK-SENSORY (1.3.3) | `sensory.py` | English instruction/sensory text cues, page locations |
+| CHK-COLOR (1.4.1) | `color.py` | English color/meaning cues and multicolor vector graphics |
+| CHK-LINK (2.4.4) | `link.py` | pikepdf annotations/tagged alternatives, PyMuPDF labels, veraPDF PDF/UA-1 7.18.5 |
+| CHK-NONTEXT, CHK-STRUCTURE | Person 1: not implemented | |
+
+Person 2 behavior, reproducible PDFs and test expectations are documented in
+[`test_fixtures/person2/README.md`](../test_fixtures/person2/README.md). These
+three checks only emit `needs_review`, classified as `human_review`, and do not
+repair PDFs. They inspect all pages. Their absence of findings is not proof of
+accessibility.
 
 ## Adding your check
 

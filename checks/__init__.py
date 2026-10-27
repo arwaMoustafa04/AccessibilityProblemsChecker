@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from catalog import CHECKS
-from checks import headings, lang, title
+from checks import color, headings, lang, link, sensory, title
 from checks.base import CheckContext, Issue
 
 log = logging.getLogger("pdf_accessibility.checks")
@@ -28,9 +28,9 @@ CHECK_FUNCTIONS: dict[str, CheckFunction] = {
     "CHK-HEADINGS": headings.check,
     # "CHK-NONTEXT": nontext.check,      # Person 1
     # "CHK-STRUCTURE": structure.check,  # Person 1/2
-    # "CHK-SENSORY": sensory.check,      # Person 2
-    # "CHK-COLOR": color.check,          # Person 2
-    # "CHK-LINK": link.check,            # Person 2
+    "CHK-SENSORY": sensory.check,
+    "CHK-COLOR": color.check,
+    "CHK-LINK": link.check,
 }
 
 
