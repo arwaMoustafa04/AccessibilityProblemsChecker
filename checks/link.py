@@ -80,4 +80,28 @@ def check(ctx: CheckContext) -> list[Issue]:
                            "identifies its purpose, and verify the associated context.",
                 sources=["pikepdf", "PyMuPDF"],
             ))
+    # Only the link-specific PDF/UA-1 rules, not generic annotation rules
+    # (7.18.1 can concern unrelated annotations). These are supporting machine
+    # findings, not a verdict on contextual WCAG 2.4.4 conformance.
+    report = ctx.verapdf  # cached by CheckContext; shared with Person 3 checks
+    if report.available:
+        seen = set()
+        for rule in report.matching("7.18.5"):
+            locations: list[int | None] = list(rule.pages) if rule.pages else [None]
+            for page_number in locations:
+                key = (rule.rule_id, page_number)
+                if key in seen:
+                    continue
+                seen.add(key)
+                issues.append(Issue(
+                    CHECK_ID, "link_pdfua_rule_needs_review",
+                    f"veraPDF reported PDF/UA-1 rule {rule.rule_id}: {rule.description} "
+                    "Review the link tagging/alternative description and contextual purpose; "
+                    "this PDF/UA result alone does not establish a WCAG 2.4.4 failure.",
+                    evaluation_result="needs_review", page=page_number,
+                    object_ref=f"PDF/UA-1 {rule.rule_id}",
+                    suggestion="Inspect the reported link annotations in an accessibility editor "
+                               "and provide correct Link tagging and meaningful alternative descriptions.",
+                    sources=["veraPDF"],
+                ))
     return issues

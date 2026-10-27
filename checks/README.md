@@ -11,7 +11,7 @@ level and classification (auto_fixable / human_review) come from `catalog.py`.
 | CHK-HEADINGS (2.4.6) | `headings.py` | pikepdf (structure tree, RoleMap, form fields), PyMuPDF (font sizes), veraPDF 7.4 |
 | CHK-SENSORY (1.3.3) | `sensory.py` | English instruction/sensory text cues, page locations |
 | CHK-COLOR (1.4.1) | `color.py` | English color/meaning cues and multicolor vector graphics |
-| CHK-LINK (2.4.4) | `link.py` | Link annotations, visible labels, explicit annotation/Link alternatives |
+| CHK-LINK (2.4.4) | `link.py` | pikepdf annotations/tagged alternatives, PyMuPDF labels, veraPDF PDF/UA-1 7.18.5 |
 | CHK-NONTEXT, CHK-STRUCTURE | Person 1: not implemented | |
 
 Person 2 behavior, reproducible PDFs and test expectations are documented in

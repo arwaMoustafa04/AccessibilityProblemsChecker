@@ -24,7 +24,25 @@ The pipeline includes their IDs in `human_review_items`, updates summary counts,
 and prints explanations in the report PDF. The uploaded PDF is returned unchanged
 when repairs are disabled; these checks never repair anything, even in repair mode.
 
-## Fixed fixture expectations (for the named check only)
+## Library integration
+
+- **PyMuPDF** supplies extracted text, vector drawings and visible link labels.
+- **pikepdf** supplies link annotations and tagged alternative text. The common
+  pipeline also uses it for PDF validation and safe object access.
+- **veraPDF** supplies PDF/UA-1 link rule failures (clause 7.18.5), with one review
+  finding per rule/page. Its report is cached by `CheckContext` and reused by
+  title/language/headings, so the executable runs at most once per evaluation.
+  Generic annotation rules are not attributed to links. PDF/UA rule failures
+  are supporting evidence, not automatic WCAG 2.4.4 verdicts. Semantic sensory
+  meaning and color-only information cannot be certified by these machine rules.
+
+Install veraPDF using the project's deployment instructions or set
+`VERAPDF_PATH` to your local executable. `VERAPDF_ENABLED=false` disables it;
+missing tools, timeouts and unreadable reports retain the local detectors and
+are disclosed in response limitations. Unit tests use controlled XML/command
+results, including exit code 1 (noncompliance); they do not require a Java install.
+
+## Fixed fixture expectations (local heuristics, veraPDF disabled)
 
 | PDF | Expected issue types |
 |---|---|
@@ -42,7 +60,7 @@ when repairs are disabled; these checks never repair anything, even in repair mo
 From the repository root, after installing `requirements-dev.txt`:
 
 ```sh
-python -m pytest test_person2_checks.py -v
+VERAPDF_ENABLED=false python -m pytest test_person2_checks.py -v
 python -m pytest -q
 python -m test_fixtures.person2.generate
 uvicorn main:app --port 8000
@@ -82,6 +100,7 @@ Person 1's implementation is integrated; this contribution does not claim 8/8.
 
 ## References used to define review behavior
 
+- https://github.com/veraPDF/veraPDF-validation-profiles/wiki/PDFUA-Part-1-rules
 - https://www.w3.org/WAI/WCAG21/Understanding/sensory-characteristics.html
 - https://www.w3.org/WAI/WCAG21/Understanding/use-of-color.html
 - https://www.w3.org/WAI/WCAG21/Understanding/link-purpose-in-context.html

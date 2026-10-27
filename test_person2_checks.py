@@ -157,3 +157,100 @@ def test_one_failed_person2_check_does_not_hide_other_findings(monkeypatch):
     assert "CHK-COLOR" not in body["checks_performed"]
     assert {"CHK-SENSORY", "CHK-LINK"} <= {f["check_id"] for f in body["findings"]}
     assert any("CHK-COLOR could not be completed" in line for line in body["limitations"])
+
+
+LINK_MRR = '''<report><validationReport><details>
+<rule status="failed" clause="7.18.5" testNumber="2">
+<description>Link alternative description is absent</description>
+<check><context>root/pages[0]/annots[0]</context></check>
+<check><context>root/pages[1]/annots[0]</context></check>
+</rule>
+<rule status="failed" clause="7.18.1" testNumber="2">
+<description>Annotation alternative description is absent</description>
+</rule>
+<rule status="failed" clause="7.18.4" testNumber="1">
+<description>Widget form tagging is invalid</description>
+</rule>
+</details></validationReport></report>'''
+
+
+def test_verapdf_link_rules_keep_pages_and_ignore_unrelated_annotations():
+    from checks.verapdf import VeraReport, parse_mrr
+    data = make_pdf("Services", label="Apply for a library card", page_number=2)
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        ctx = CheckContext(data, "a.pdf", pdf)
+        ctx.verapdf = VeraReport(True, parse_mrr(LINK_MRR))
+        try:
+            found = link.check(ctx)
+        finally:
+            ctx.close()
+    assert [i.page for i in found] == [1, 2]
+    assert all(i.issue_type == "link_pdfua_rule_needs_review" for i in found)
+    assert all(i.sources == ["veraPDF"] and i.evaluation_result == "needs_review" for i in found)
+    assert all(i.object_ref == "PDF/UA-1 7.18.5-2" for i in found)
+
+
+def test_verapdf_unknown_page_and_duplicate_rule():
+    from checks.verapdf import RuleFailure, VeraReport
+    data = make_pdf("Services", label="Apply for a library card")
+    rule = RuleFailure("7.18.5", "1", "Link tagging needs review")
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        ctx = CheckContext(data, "a.pdf", pdf)
+        ctx.verapdf = VeraReport(True, [rule, rule])
+        try:
+            found = link.check(ctx)
+        finally:
+            ctx.close()
+    assert len(found) == 1 and found[0].page is None
+    assert found[0].object_ref == "PDF/UA-1 7.18.5-1"
+
+
+def test_verapdf_command_report_reused_by_all_checks(monkeypatch):
+    import subprocess
+
+    calls = []
+
+    def command(args, **kwargs):
+        calls.append(args)
+        assert args[1:5] == ["--flavour", "ua1", "--format", "mrr"]
+        assert Path(args[-1]).read_bytes().startswith(b"%PDF-")
+        return subprocess.CompletedProcess(args, 1, LINK_MRR, "")
+
+    monkeypatch.setenv("VERAPDF_ENABLED", "true")
+    monkeypatch.setenv("VERAPDF_PATH", "/test/verapdf")
+    monkeypatch.setattr("checks.verapdf.subprocess.run", command)
+    with TestClient(app) as client:
+        result = client.post("/process", files={"file": (
+            "a.pdf", make_pdf("Services", label="Apply for a library card", page_number=2),
+            "application/pdf")}).json()
+    assert len(calls) == 1
+    found = [f for f in result["findings"] if f["issue_type"] == "link_pdfua_rule_needs_review"]
+    assert len(found) == 2
+    assert all(f["classification"] == "human_review" and f["status"] == "needs_human_review"
+               and f["finding_id"] in result["human_review_items"] for f in found)
+    assert not any("veraPDF was not used" in line for line in result["limitations"])
+
+
+@pytest.mark.parametrize("failure", ["timeout", "bad_xml", "missing"])
+def test_verapdf_failure_keeps_local_findings_and_discloses_limitations(monkeypatch, failure):
+    import subprocess
+
+    def command(args, **kwargs):
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(args, 30)
+        if failure == "missing":
+            raise FileNotFoundError("veraPDF not installed")
+        return subprocess.CompletedProcess(args, 1, "<broken", "")
+
+    monkeypatch.setenv("VERAPDF_ENABLED", "true")
+    monkeypatch.setenv("VERAPDF_PATH", "/test/verapdf")
+    monkeypatch.setattr("checks.verapdf.subprocess.run", command)
+    with TestClient(app) as client:
+        response = client.post("/process", files={"file": (
+            "a.pdf", make_pdf("Services", label="Click here"), "application/pdf")})
+    assert response.status_code == 200
+    result = response.json()
+    assert "CHK-LINK" in result["checks_performed"]
+    assert any(f["issue_type"] == "link_purpose_unclear" for f in result["findings"])
+    assert not any(f["issue_type"] == "link_pdfua_rule_needs_review" for f in result["findings"])
+    assert any("veraPDF was not used" in line for line in result["limitations"])
