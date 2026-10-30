@@ -26,3 +26,13 @@ oracle) is fixed here and checked by the tester (`tester/suite.py`).
 Generated in code instead of stored as files: no file at all (T-07), a corrupted PDF
 (T-08), and the 20 MB boundary at exactly 20,971,521 bytes (T-11, rejected) and
 20,971,520 bytes (T-12, accepted).
+
+## Implemented image and structure checks
+
+Focused, reproducible fixtures and exact expected results are in
+[`pdf_checks/README.md`](pdf_checks/README.md). Existing shared PDFs are unchanged.
+With default settings, `goodAccessible.pdf` produces no findings from these two
+checks; `accessibilityIssues.pdf` produces `missing_document_structure` and
+`image_without_text_alternative` (page 1). Its visually drawn, untagged table is
+not inferred as a separate table finding. These observations do not establish
+accessibility or cover the other six catalog checks.

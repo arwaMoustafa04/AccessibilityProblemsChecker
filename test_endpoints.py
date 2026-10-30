@@ -31,6 +31,12 @@ def make_pdf(title: str | None = None, lang: str | None = None,
              user_password: str = "") -> bytes:
     pdf = pikepdf.new()
     pdf.add_blank_page()
+    root = pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.StructTreeRoot))
+    doc = pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.StructElem,
+                                             S=pikepdf.Name.Document, P=root))
+    root.K = pikepdf.Array([doc])
+    pdf.Root.StructTreeRoot = root
+    pdf.Root.MarkInfo = pikepdf.Dictionary(Marked=True)
     if title:
         pdf.docinfo["/Title"] = title
     if lang:
@@ -167,8 +173,8 @@ def test_openapi_operation_ids_are_unique() -> None:
 
 # --- POST /process: success ---------------------------------------------------
 
-def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged(post_pdf) -> None:
-    """Phase 3 (default): valid PDFs get a well-formed result with no checks or repairs."""
+def test_default_checks_leave_tagged_pdf_unchanged(post_pdf) -> None:
+    """Default checks run; valid tags produce no findings and no automatic repairs."""
     original = make_pdf()  # missing title and language, but nothing should be fixed yet
     response = post_pdf(original, name="annual_report.pdf")
     assert response.status_code == 200
@@ -194,10 +200,10 @@ def test_phase3_valid_pdf_runs_no_checks_and_is_unchanged(post_pdf) -> None:
             assert len(pdf.pages) > 0
     assert body["status"] == "completed"
     assert body["outcome"] == "completed_no_repairs"
-    assert body["checks_performed"] == []
+    assert body["checks_performed"] == ["CHK-NONTEXT", "CHK-STRUCTURE"]
     assert body["findings"] == [] and body["repairs"] == []
     assert body["summary"] == {"total_issues": 0, "fixed_count": 0, "human_review_count": 0}
-    assert "Phase 4" in body["limitations"][0]
+    assert "CHK-TITLE" in body["limitations"][0]
     assert body["output_pdf"]["modified"] is False
     assert base64.b64decode(body["output_pdf"]["content_base64"]) == original
     assert base64.b64decode(body["report_pdf"]["content_base64"]).startswith(b"%PDF-")
@@ -221,7 +227,7 @@ def test_pdf_missing_title_and_language_is_repaired(title_lang_on, post_pdf) -> 
     assert body["outcome"] == "completed_with_repairs"
     assert body["input"] == {"file_name": "annual_report.pdf", "sha256": original_hash,
                              "size_bytes": len(original)}
-    assert body["checks_performed"] == ["CHK-TITLE", "CHK-LANG"]
+    assert body["checks_performed"] == ["CHK-NONTEXT", "CHK-STRUCTURE", "CHK-TITLE", "CHK-LANG"]
     assert {f["issue_type"] for f in body["findings"]} == {
         "missing_document_title", "display_doc_title_not_set", "missing_document_language"}
     assert all(f["status"] == "fixed" for f in body["findings"])

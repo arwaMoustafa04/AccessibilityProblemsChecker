@@ -3,16 +3,8 @@
 Stages (shared spec, POST /process description):
 RECEIVED -> VALIDATED -> EVALUATED -> CLASSIFIED -> REPAIRED -> REVALIDATED -> REPORTED
 
-Phase 3 (current): input validation is complete, and a valid PDF gets a
-well-formed EvaluationResult with no checks run and no repairs. Checks arrive in
-Phase 4 and automatic repair in Phase 5 (see the Phase 2 milestone plan).
-checks_performed is empty and limitations say why, so an empty findings list is
-never mistaken for "checked and passed".
-
-Early work for Phases 4-5 is already here but switched OFF: detection and repair
-of CHK-TITLE and CHK-LANG. Set the environment variable
-ENABLE_TITLE_LANG_CHECKS=true to turn it on (for local experiments only, until
-the pod reaches Phase 5).
+CHK-NONTEXT and CHK-STRUCTURE run by default and produce human-review findings.
+Title/language detection and repair remain opt-in via ENABLE_TITLE_LANG_CHECKS.
 """
 
 from __future__ import annotations
@@ -22,7 +14,6 @@ import hashlib
 import io
 import os
 import uuid
-from dataclasses import dataclass
 from pathlib import PurePath
 
 import pikepdf
@@ -37,17 +28,19 @@ from models import (
     OutputFile,
     Repair,
 )
+from pdf_checks import Issue, detect_pdf_issues
 
 MAX_FILE_SIZE_BYTES = 20_971_520
 DEFAULT_LANGUAGE = "en-US"
 
-# Off by default: Phase 3 does not run checks or repairs.
+# Title/language automatic repair remains off by default.
 ENABLE_TITLE_LANG_CHECKS = os.environ.get("ENABLE_TITLE_LANG_CHECKS", "").lower() in (
     "1", "true", "yes")
 
-IMPLEMENTED_CHECKS = ["CHK-TITLE", "CHK-LANG"]
+IMPLEMENTED_CHECKS = ["CHK-NONTEXT", "CHK-STRUCTURE"]
+TITLE_LANG_CHECKS = ["CHK-TITLE", "CHK-LANG"]
 NOT_YET_IMPLEMENTED = [
-    "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-SENSORY",
+    "CHK-SENSORY",
     "CHK-COLOR", "CHK-LINK", "CHK-HEADINGS",
 ]
 
@@ -96,14 +89,6 @@ def validate_input(data: bytes) -> pikepdf.Pdf:
 
 # --- EVALUATED / CLASSIFIED --------------------------------------------------
 
-@dataclass
-class Issue:
-    check_id: str
-    issue_type: str
-    object_ref: str
-    description: str
-
-
 def _document_title(pdf: pikepdf.Pdf) -> str:
     title = ""
     if "/Title" in pdf.docinfo:
@@ -118,7 +103,9 @@ def _document_title(pdf: pikepdf.Pdf) -> str:
 
 
 def detect_issues(pdf: pikepdf.Pdf) -> list[Issue]:
-    issues: list[Issue] = []
+    issues = detect_pdf_issues(pdf)
+    if not ENABLE_TITLE_LANG_CHECKS:
+        return issues
 
     # CHK-TITLE (WCAG 2.4.2): a title exists and viewers are told to show it.
     if not _document_title(pdf):
@@ -199,13 +186,16 @@ def build_report_pdf(result: dict) -> bytes:
         p(f"Evaluation ID: {result['evaluation_id']}"),
         Spacer(1, 8),
         p("Checks performed", "Heading2"),
-        p(", ".join(result["checks_performed"]) or "None yet (checks arrive in Phase 4)."),
+        p(", ".join(result["checks_performed"]) or "None."),
         p("Findings", "Heading2"),
     ]
     if result["findings"]:
         for f in result["findings"]:
             story.append(p(f"{f['finding_id']} - {f['check_id']} (WCAG {f['wcag_criterion']}): "
-                           f"{f['location']['description']}. Status: {f['status']}."))
+                           f"{f['location']['description']}. "
+                           f"Page: {f['location']['page'] or 'document'}. "
+                           f"Object: {f['location']['object_ref']}. "
+                           f"Result: {f['evaluation_result']}. Status: {f['status']}."))
     elif result["checks_performed"]:
         story.append(p("No issues found by the checks performed."))
     else:
@@ -238,104 +228,84 @@ def _finding(fid: str, issue: Issue, status: FindingStatus, fix: str | None) -> 
         issue_type=issue.issue_type,
         wcag_criterion=check.wcag_criterion,
         wcag_level=check.wcag_level,
-        location=Location(page=None, object_ref=issue.object_ref,
+        location=Location(page=issue.page, object_ref=issue.object_ref,
                           description=issue.description),
-        evaluation_result="fail",
+        evaluation_result=issue.evaluation_result,
         classification=check.classification,
         status=status,
         fix_description=fix,
     )
 
 
-def _phase3_result(data: bytes, file_name: str) -> EvaluationResult:
-    """Valid PDF, no checks yet: well-formed result, original returned unchanged."""
-    stem = PurePath(file_name).stem
-    result = {
-        "evaluation_id": str(uuid.uuid4()),
-        "status": "completed",
-        "input": {"file_name": file_name, "sha256": _sha256(data), "size_bytes": len(data)},
-        "outcome": "completed_no_repairs",
-        "checks_performed": [],
-        "findings": [],
-        "repairs": [],
-        "new_issues_after_repair": [],
-        "human_review_items": [],
-        "summary": {"total_issues": 0, "fixed_count": 0, "human_review_count": 0},
-        "limitations": [
-            "No accessibility checks were performed: the eight agreed checks are "
-            "implemented in Phase 4 and automatic repair in Phase 5. This response "
-            "only confirms that the PDF was accepted and the interface works.",
-            "Human-review findings are never repaired automatically.",
-        ],
-        "compliance_statement": "This report does not certify ADA Title II or WCAG 2.1 conformance.",
-    }
-    report_bytes = build_report_pdf(result)
-    return EvaluationResult.model_validate({
-        **result,
-        "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(data),
-                              modified=False, content_base64=_b64(data)),
-        "report_pdf": OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
-                              content_base64=_b64(report_bytes)),
-    })
-
-
 def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     file_name = file_name or "upload.pdf"
     pdf = validate_input(data)  # opened from an in-memory copy; `data` is never changed
-    if not ENABLE_TITLE_LANG_CHECKS:
-        pdf.close()
-        return _phase3_result(data, file_name)
     try:
         issues = detect_issues(pdf)
-        actions = repair(pdf, issues, file_name) if issues else {}
-        out = io.BytesIO()
-        pdf.save(out)
-        repaired_bytes = out.getvalue() if actions else data
+        actions = repair(pdf, issues, file_name) if ENABLE_TITLE_LANG_CHECKS else {}
+        repaired_bytes = data
+        if actions:
+            out = io.BytesIO()
+            pdf.save(out)
+            repaired_bytes = out.getvalue()
     finally:
         pdf.close()
 
     # REVALIDATED: re-run the implemented checks on the repaired copy.
-    with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
-        remaining = detect_issues(repaired)
-    remaining_types = {i.issue_type for i in remaining}
-    original_types = {i.issue_type for i in issues}
+    remaining = issues
+    if actions:
+        with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
+            remaining = detect_issues(repaired)
+    remaining_keys = {i.key for i in remaining}
+    original_keys = {i.key for i in issues}
 
     findings: list[Finding] = []
     repairs: list[Repair] = []
     for n, issue in enumerate(issues, start=1):
         fid = f"F-{n}"
-        passed = issue.issue_type not in remaining_types
+        if CHECKS_BY_ID[issue.check_id].classification == "human_review":
+            findings.append(_finding(fid, issue, "needs_human_review", None))
+            continue
+        passed = issue.key not in remaining_keys
         findings.append(_finding(fid, issue, "fixed" if passed else "repair_failed",
                                  actions.get(issue.issue_type)))
-        repairs.append(Repair(repair_id=f"R-{n}", finding_id=fid,
-                              action=actions.get(issue.issue_type, "No supported repair"),
-                              validation_result="passed" if passed else "failed"))
+        if issue.issue_type in actions:
+            repairs.append(Repair(repair_id=f"R-{len(repairs) + 1}", finding_id=fid,
+                                  action=actions[issue.issue_type],
+                                  validation_result="passed" if passed else "failed"))
     new_issues = [
-        _finding(f"N-{n}", i, "repair_failed", None)
+        _finding(f"N-{n}", i, "needs_human_review"
+                 if CHECKS_BY_ID[i.check_id].classification == "human_review" else "repair_failed", None)
         for n, i in enumerate(
-            (i for i in remaining if i.issue_type not in original_types), start=1)
+            (i for i in remaining if i.key not in original_keys), start=1)
     ]
 
     stem = PurePath(file_name).stem
     fixed = sum(1 for f in findings if f.status == "fixed")
+    review_ids = [f.finding_id for f in findings + new_issues if f.status == "needs_human_review"]
+    enabled = IMPLEMENTED_CHECKS + (TITLE_LANG_CHECKS if ENABLE_TITLE_LANG_CHECKS else [])
+    disabled = NOT_YET_IMPLEMENTED + ([] if ENABLE_TITLE_LANG_CHECKS else TITLE_LANG_CHECKS)
     result = {
         "evaluation_id": str(uuid.uuid4()),
         "status": "completed",
         "input": {"file_name": file_name, "sha256": _sha256(data), "size_bytes": len(data)},
         "outcome": "completed_with_repairs" if actions else "completed_no_repairs",
-        "checks_performed": list(IMPLEMENTED_CHECKS),
+        "checks_performed": enabled,
         "findings": [f.model_dump() for f in findings],
         "repairs": [r.model_dump() for r in repairs],
         "new_issues_after_repair": [f.model_dump() for f in new_issues],
-        "human_review_items": [],
+        "human_review_items": review_ids,
         "summary": {"total_issues": len(findings), "fixed_count": fixed,
-                    "human_review_count": 0},
+                    "human_review_count": len(review_ids)},
         "limitations": [
-            "Checks " + ", ".join(NOT_YET_IMPLEMENTED)
-            + " are not implemented yet (planned for Phase 4) and were not performed.",
+            "Checks " + ", ".join(disabled)
+            + " were not performed (unimplemented or disabled).",
             "Human-review findings are never repaired automatically.",
-            f'Missing titles are set from the file name and missing languages are set to '
-            f'"{DEFAULT_LANGUAGE}"; a person should confirm both.',
+            "Image purpose, alternative-text accuracy, reading order, complete tagging, and table "
+            "semantics require human review. Untagged tables and vector graphics are not inferred.",
+            "A present Alt or TH tag does not establish accessibility or semantic correctness.",
+            *([f'Titles are derived from filenames and languages default to "{DEFAULT_LANGUAGE}"; '
+               'a person should confirm both.'] if ENABLE_TITLE_LANG_CHECKS else []),
         ],
         "compliance_statement": "This report does not certify ADA Title II or WCAG 2.1 conformance.",
     }

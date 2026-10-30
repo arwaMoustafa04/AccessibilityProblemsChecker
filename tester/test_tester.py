@@ -188,6 +188,6 @@ def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
     report = tester.post("/test/run", json={"session_id": sid}).json()
     check_report_format(report)
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-    # The six human-review checks are Phase 4 work, so full detection (T-13) still fails.
+    # Four human-review checks remain unimplemented, so full detection (T-13) still fails.
     assert outcomes.pop("T-13") == "fail"
     assert set(outcomes.values()) == {"pass"}

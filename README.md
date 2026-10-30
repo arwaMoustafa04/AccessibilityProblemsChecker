@@ -2,7 +2,7 @@
 
 Team 1 (West Lafayette, Pod D) implementation of the pod's shared PDF accessibility
 service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WCAG 2.1 AA).
-This README describes the system **as delivered at the end of Phase 3**.
+This README describes the Phase 3 interface plus the implemented image and structure checks.
 
 ## Deployed services
 
@@ -59,25 +59,36 @@ Course test endpoints:
   `compliance_statement` ("This report does not certify ADA Title II or WCAG 2.1
   conformance."), `output_pdf` and `report_pdf` (file name, media type, SHA-256,
   `modified`, Base64 content).
-- **Finding / Repair / Location**: defined in the contract for Phases 4–5; always empty in Phase 3.
+- **Finding / Repair / Location**: check results and locations; human-review findings never create repair records.
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
   `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `CORRUPTED_PDF`, `UNREADABLE_PDF`,
   `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `PROCESSING_ERROR`, `EXTERNAL_SERVICE_UNAVAILABLE`.
 - **SessionRef / SystemReport / TestError**: the course test-interface bodies.
 
-### What `/process` does in Phase 3
+### What `/process` does now
 
-Phase 3 delivers the shared interface; detection is Phase 4 and automatic repair is
-Phase 5 (Phase 2 milestone plan).
+The interface and upload validation are complete. CHK-NONTEXT and CHK-STRUCTURE
+run on every upload; the remaining checks are incomplete or disabled.
 
 - **Input validation is complete:** no file → 400 `MISSING_FILE`; over 20 MB
   (20,971,520 bytes) → 413 `FILE_TOO_LARGE`; no `%PDF-` header in the first 1024 bytes
   → 415 `INVALID_FILE_TYPE`; corrupted, encrypted or password-protected → 422 with
   the matching code. Exactly 20 MB is accepted.
-- **A valid PDF gets a contract-conforming `EvaluationResult` with no checks run:**
-  `checks_performed`, `findings` and `repairs` are empty, `outcome` is
-  `completed_no_repairs`, the PDF is returned unchanged (`modified: false`), a short
-  report PDF is included, and `limitations` explains that checks arrive in Phase 4.
+- **CHK-NONTEXT (1.1.1):** checks Figure `/Alt` descriptions and images drawn in page
+  content, nested Form XObjects, and inline images. Resolves custom roles, MCIDs,
+  page/stream scopes and image object references; ignores unused resources and
+  explicitly marked `/Artifact` image uses. Missing Figure alternatives are `fail`;
+  images without a resolvable alternative are `needs_review`.
+- **CHK-STRUCTURE (1.3.1):** checks for a nonempty structure tree, the tagged-document
+  marker, malformed relationships, and tagged tables with data cells but no headers.
+  Missing/empty structure is `fail`; marker, relationship and header concerns are
+  `needs_review`. Nested tables are inspected separately.
+- Both checks have `classification: human_review`, `status: needs_human_review`,
+  and finding IDs in `human_review_items`. They never trigger repairs. The original
+  PDF is returned byte-for-byte unchanged unless flagged title/language repair runs.
+  JSON and report PDF include performed checks, findings, locations and limitations.
+- Title/language detection and repair remain opt-in via `ENABLE_TITLE_LANG_CHECKS=true`.
+  `checks_performed` lists only enabled checks; disabled checks appear in limitations.
 - PDFs are processed in memory and never stored.
 
 ## Tester (`tester/` folder)
@@ -115,15 +126,20 @@ Named files are the team's shared test set in `tester/fixtures/` (its README giv
 file's expected result); the no-file, corrupted and exact-size cases are generated in code.
 Tests for later phases report `skip` until `CURRENT_PHASE` in `tester/suite.py` reaches them.
 
-**Phase 3 result against our deployed system:** 12 pass, 2 skip (T-13, T-14);
+**Historical Phase 3 result against our deployed system:** 12 pass, 2 skip (T-13, T-14);
 component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 
-## Known limitations (Phase 3)
+## Known limitations
 
-- **No accessibility checks run yet.** `/process` validates input and returns a
-  well-formed empty result; the 8 checks arrive in Phase 4 and repair in Phase 5.
-  Early title/language detection and repair code exists in `pipeline.py` behind
-  `ENABLE_TITLE_LANG_CHECKS` (off in deployment).
+- **Partial detection:** image and structure checks use PDF tags and drawn content.
+  They cannot establish image purpose, alternative-text accuracy, reading order,
+  complete tagging or table semantics. Untagged tables and vector graphics are not
+  inferred; presence of `/Alt` or `/TH` alone does not prove accessibility. `/ActualText`
+  is not treated as a Figure `/Alt` replacement. Malformed/cyclic data produces review
+  findings for incomplete inspection. Tree depth over 128, more than 100,000 structure
+  nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
+- CHK-SENSORY, CHK-COLOR, CHK-LINK and CHK-HEADINGS are unimplemented. Title/language
+  detection and repair remain behind `ENABLE_TITLE_LANG_CHECKS` (off by default).
 - **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
   conformance; human-review items are never repaired automatically.
 - **Sessions are in memory** (system and tester): they are lost when a service
@@ -137,7 +153,8 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 ## Code layout
 
 - `main.py`: HTTP routes, error handling, request logging
-- `pipeline.py`: input validation, Phase 3 result, report PDF; gated detection/repair
+- `pipeline.py`: input validation, findings, report PDF, gated title/language repair
+- `pdf_checks.py`: image and document/table structure inspection
 - `catalog.py`: the 8 agreed checks
 - `models.py`: request/response models matching `openapi.yaml`
 - `sessions.py`: test sessions and per-session code coverage (coverage.py)
@@ -146,6 +163,18 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 - `tester/suite.py`: the 14 test cases
 - `deploy/setup.sh`: EC2 install (venv, systemd services, nginx)
 - `.github/workflows/ci.yml`: ruff, mypy, OpenAPI validation, pip-audit, pytest, conformance report, full tester run
+
+## Focused check fixtures and tests
+
+[`tester/fixtures/pdf_checks/README.md`](tester/fixtures/pdf_checks/README.md) lists
+12 reproducible PDFs and their expected findings. Regenerate them with
+`python tester/fixtures/pdf_checks/generate.py`; run the focused suite with
+`python -m pytest test_pdf_checks.py`. Tests include malformed/cyclic tags and forms,
+custom roles, MCID scoping, artifacts, repeated images, table nesting, response/report
+contents, and mixed review findings with flagged automatic repairs.
+
+The shared cross-team tester remains in Phase 3: T-13 requires other unimplemented
+checks too. Its phase and shared fixtures have not changed.
 
 ## Run locally
 
