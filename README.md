@@ -68,6 +68,8 @@ Course test endpoints:
   conformance."), `output_pdf` and `report_pdf` (file name, media type, SHA-256,
   `modified`, Base64 content).
 - **Finding / Repair / Location**: check results and locations; human-review findings never create repair records.
+  `Location.bbox` (optional, nullable) is `[x0, y0, x1, y1]` on `page` in PDF user space, so a
+  viewer can highlight the finding; `checks/locate.py` fills it where the position is known.
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
   `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `CORRUPTED_PDF`, `UNREADABLE_PDF`,
   `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `PROCESSING_ERROR`, `EXTERNAL_SERVICE_UNAVAILABLE`.
@@ -165,6 +167,7 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 - `pipeline.py`: input validation, runs the registered checks, findings, report PDF, gated repair
 - `checks/`: the check registry and one module per check (see `checks/README.md`)
 - `pdf_checks.py`: image and document/table structure inspection (CHK-NONTEXT, CHK-STRUCTURE)
+- `checks/locate.py`: where each finding is on its page (`Location.bbox`), for the UI's highlight
 - `catalog.py`: the 8 agreed checks
 - `models.py`: request/response models matching `openapi.yaml`
 - `sessions.py`: test sessions and per-session code coverage (coverage.py)

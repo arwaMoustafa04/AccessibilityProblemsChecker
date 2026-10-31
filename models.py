@@ -52,6 +52,8 @@ class Location(Strict):
     page: int | None = None
     object_ref: str | None = None
     description: str
+    # Optional: [x0, y0, x1, y1] on `page` in PDF user space, for highlighting in a viewer.
+    bbox: list[float] | None = None
 
 
 FindingStatus = Literal["detected", "fixed", "repair_failed", "needs_human_review"]

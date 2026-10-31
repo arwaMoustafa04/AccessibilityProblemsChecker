@@ -32,6 +32,7 @@ import pikepdf
 from catalog import CHECKS_BY_ID
 from checks import CheckRun, run_checks
 from checks.base import CheckContext, Issue
+from checks.locate import Locator
 from models import (
     ErrorCode,
     EvaluationResult,
@@ -100,6 +101,9 @@ def evaluate(data: bytes, file_name: str, pdf: pikepdf.Pdf) -> tuple[CheckRun, C
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # pikepdf XMP sync warnings on odd metadata
         run = run_checks(ctx)
+    locator = Locator(ctx)
+    for issue in run.issues:
+        issue.bbox = locator.bbox(issue)
     return run, ctx
 
 
@@ -262,7 +266,7 @@ def _finding(fid: str, issue: Issue, status: FindingStatus) -> Finding:
         wcag_criterion=check.wcag_criterion,
         wcag_level=check.wcag_level,
         location=Location(page=issue.page, object_ref=issue.object_ref,
-                          description=_where(issue)),
+                          description=_where(issue), bbox=issue.bbox),
         evaluation_result=issue.evaluation_result,
         classification=check.classification,
         status=status,
@@ -376,6 +380,7 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         **result,
         "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(output_bytes),
                                  modified=bool(actions), content_base64=_b64(output_bytes)),
-        "report_pdf": OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
+        "report_pdf": OutputFile(file_name=f"{stem}_AccessibilityReport.pdf",
+                                 sha256=_sha256(report_bytes),
                                  content_base64=_b64(report_bytes)),
     })

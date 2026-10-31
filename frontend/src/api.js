@@ -69,13 +69,29 @@ export async function processPdf(file) {
   )
 }
 
+function saveBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000) // some browsers start the download later
+}
+
 // Saves one of the result's PDFs (output_pdf / report_pdf: Base64 content) as a file.
 export function downloadPdf({ file_name, media_type, content_base64 }) {
   const bytes = Uint8Array.from(atob(content_base64), (c) => c.charCodeAt(0))
-  const url = URL.createObjectURL(new Blob([bytes], { type: media_type }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = file_name
-  a.click()
-  URL.revokeObjectURL(url)
+  saveBlob(new Blob([bytes], { type: media_type }), file_name)
+}
+
+// Saves the output ("fixed") PDF and the report PDF together as
+// <original name>_AccessibilityResults.zip. JSZip is loaded on first use.
+export async function downloadResultsZip(result) {
+  const { default: JSZip } = await import('jszip')
+  const zip = new JSZip()
+  for (const pdf of [result.output_pdf, result.report_pdf]) {
+    zip.file(pdf.file_name, pdf.content_base64, { base64: true })
+  }
+  const stem = result.input.file_name.replace(/\.[^.]*$/, '') || 'document'
+  saveBlob(await zip.generateAsync({ type: 'blob' }), `${stem}_AccessibilityResults.zip`)
 }

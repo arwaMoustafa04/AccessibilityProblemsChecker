@@ -304,10 +304,10 @@ def test_zip_output_contains_all_results(post_pdf) -> None:
     assert response.headers["content-disposition"] == (
         'attachment; filename="annual_report_results.zip"')
     zf = _zip(response)
-    assert sorted(zf.namelist()) == ["annual_report_repaired.pdf", "annual_report_report.pdf",
+    assert sorted(zf.namelist()) == ["annual_report_AccessibilityReport.pdf", "annual_report_repaired.pdf",
                                      "original.pdf", "result.json"]
     assert zf.read("original.pdf") == original  # byte for byte
-    assert zf.read("annual_report_report.pdf").startswith(b"%PDF-")
+    assert zf.read("annual_report_AccessibilityReport.pdf").startswith(b"%PDF-")
 
     result = json.loads(zf.read("result.json"))
     for key in ("output_pdf", "report_pdf"):

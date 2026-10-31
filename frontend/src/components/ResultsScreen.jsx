@@ -1,11 +1,44 @@
-import { downloadPdf } from '../api.js'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { downloadPdf, downloadResultsZip } from '../api.js'
 import { CHECKS } from '../data/checks.js'
 import { formatBytes } from '../format.js'
+import { openPdf } from '../pdf.js'
 import FindingCard from './FindingCard.jsx'
+import PdfViewer from './PdfViewer.jsx'
 
 // Displays the POST /process response as-is; it does not judge accessibility itself.
-export default function ResultsScreen({ result, onRestart }) {
+// `file` is the uploaded PDF, shown in the side panel when a finding is selected.
+export default function ResultsScreen({ result, file, onRestart }) {
   const { input, checks_performed, findings, summary, limitations, compliance_statement } = result
+  const [selectedId, setSelectedId] = useState(null)
+  const [zipping, setZipping] = useState(false)
+  const selected = findings.find((f) => f.finding_id === selectedId)
+
+  // The PDF is opened once, the first time a finding is selected.
+  const documentRef = useRef(null)
+  const loadDocument = useCallback(() => (documentRef.current ??= openPdf(file)), [file])
+  useEffect(() => () => { documentRef.current?.then((d) => d.destroy(), () => {}) }, [])
+
+  // Leave room for the side panel while it is open (see .viewer-open in styles.css).
+  useEffect(() => {
+    document.body.classList.toggle('viewer-open', Boolean(selected))
+    return () => document.body.classList.remove('viewer-open')
+  }, [selected])
+
+  const closeViewer = useCallback(() => {
+    const id = selectedId
+    setSelectedId(null)
+    document.querySelector(`[data-show-finding="${id}"]`)?.focus()
+  }, [selectedId])
+
+  const downloadZip = async () => {
+    setZipping(true)
+    try {
+      await downloadResultsZip(result)
+    } finally {
+      setZipping(false)
+    }
+  }
   const performed = new Set(checks_performed)
   const findingCounts = {}
   for (const f of findings) findingCounts[f.check_id] = (findingCounts[f.check_id] ?? 0) + 1
@@ -38,13 +71,23 @@ export default function ResultsScreen({ result, onRestart }) {
 
       <section className="card" aria-labelledby="findings-title">
         <h2 id="findings-title">Findings</h2>
+        {findings.length > 0 && (
+          <p className="muted findings-hint">Select a finding to see where it is in the PDF.</p>
+        )}
         {findings.length === 0 ? (
           <p className="muted">
             No findings were reported by the checks that ran. See Checks Performed and Limitations below.
           </p>
         ) : (
           <div className="finding-list">
-            {findings.map((f) => <FindingCard key={f.finding_id} finding={f} />)}
+            {findings.map((f) => (
+              <FindingCard
+                key={f.finding_id}
+                finding={f}
+                selected={f.finding_id === selectedId}
+                onSelect={() => setSelectedId(f.finding_id)}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -96,10 +139,24 @@ export default function ResultsScreen({ result, onRestart }) {
             {result.output_pdf.modified ? 'Download Repaired PDF' : 'Download PDF'}
           </button>
         )}
+        {result.output_pdf && result.report_pdf && (
+          <button type="button" className="button button-secondary" onClick={downloadZip} disabled={zipping}>
+            {zipping ? 'Preparing ZIP…' : 'Download Fixed PDF + Report (ZIP)'}
+          </button>
+        )}
         <button type="button" className="button button-primary" onClick={onRestart}>
           Analyze Another PDF
         </button>
       </div>
+
+      {selected && (
+        <PdfViewer
+          key={selected.finding_id}
+          finding={selected}
+          loadDocument={loadDocument}
+          onClose={closeViewer}
+        />
+      )}
     </div>
   )
 }

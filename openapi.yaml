@@ -519,6 +519,17 @@ components:
           nullable: true
         description:
           type: string
+        bbox:
+          type: array
+          nullable: true
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+          description: >
+            Optional. Where the finding is on `page`, as [x0, y0, x1, y1] in PDF user
+            space (points, origin at the bottom left, before page rotation), so a viewer
+            can highlight it. Null or absent when only the page (or nothing) is known.
 
     Finding:
       type: object

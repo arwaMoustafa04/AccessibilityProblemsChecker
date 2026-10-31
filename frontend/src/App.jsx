@@ -51,7 +51,7 @@ export default function App() {
         />
       )}
       {screen === 'processing' && <ProcessingScreen fileName={file?.name} />}
-      {screen === 'results' && result && <ResultsScreen result={result} onRestart={restart} />}
+      {screen === 'results' && result && <ResultsScreen result={result} file={file} onRestart={restart} />}
     </main>
   )
 }

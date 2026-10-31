@@ -60,7 +60,10 @@ What the context gives you:
 
 Issue fields: `issue_type` (snake_case name), `description` (what is wrong),
 `evaluation_result` (`"fail"`, or `"needs_review"` when a person must judge),
-`page` (1-based), `object_ref`, `suggestion` (how to fix), `sources` (tools used).
+`page` (1-based), `object_ref`, `suggestion` (how to fix), `sources` (tools used),
+`bbox` (optional position on the page in PDF user space). You rarely need to set `bbox`:
+`locate.py` works it out from `object_ref` (an annotation `N G R`, a `Page[n]/Contents/op[i]`
+image, a `Page[n]/TextBlock[i]`, a Figure path) or from a quoted phrase in `description`.
 
 If a check raises an exception, `/process` still answers. That check is left out
 of `checks_performed`, and `limitations` gives the reason.

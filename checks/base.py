@@ -31,6 +31,8 @@ class Issue:
     object_ref: str | None = None  # where in the PDF, e.g. "Catalog/Lang" or "12 0 R"
     suggestion: str | None = None  # how it can be fixed (Finding.fix_description)
     sources: list[str] = field(default_factory=list)  # tools that found it, e.g. ["pikepdf"]
+    # [x0, y0, x1, y1] on `page` in PDF user space; filled by checks/locate.py if not set here
+    bbox: list[float] | None = None
 
     @property
     def key(self) -> tuple:

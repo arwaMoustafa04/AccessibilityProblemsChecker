@@ -39,7 +39,15 @@ download the report PDF and the output PDF that `/process` returns.
 
 1. **Upload**: drag-and-drop or file picker, file name and size, error message area, Analyze PDF button.
 2. **Processing**: "Analyzing PDF…" with the steps Validating → Checking accessibility → Classifying findings.
-3. **Results**: summary counts, finding cards (issue, result, location, PDF object, status), checks performed (with checks that did not run marked), limitations, the compliance disclaimer, and Analyze Another PDF.
+3. **Results**: summary counts, finding cards (issue, result, location, PDF object, status), checks performed (with checks that did not run marked), limitations, the compliance disclaimer, the downloads, and Analyze Another PDF.
+4. **PDF viewer** (side panel): click a finding (or its **Show in PDF** button) to see the
+   uploaded PDF at that finding's page, with its position highlighted when the API gives
+   one (`location.bbox`). Findings without a position show the page only; whole-document
+   findings say so. Escape or × closes it. On narrow screens it covers the screen.
+
+Downloads: **Download Report PDF** (`<file>_AccessibilityReport.pdf`), the output PDF, and
+**Download Fixed PDF + Report (ZIP)** (`<file>_AccessibilityResults.zip` with both PDFs,
+built in the browser). Until automatic repair is on, the output PDF is the uploaded file.
 
 The UI only displays what `/process` returns; it never decides accessibility itself.
 
@@ -47,6 +55,8 @@ The UI only displays what `/process` returns; it never decides accessibility its
 
 - `src/App.jsx`: which screen is shown
 - `src/components/UploadScreen.jsx`, `ProcessingScreen.jsx`, `ResultsScreen.jsx`, `FindingCard.jsx`
+- `src/components/PdfViewer.jsx`: the side panel that renders a page and highlights `location.bbox`
+- `src/pdf.js`: loads pdf.js (only when a finding is first opened)
 - `src/data/checks.js`: the 8 agreed checks (same as `catalog.py` / `GET /checks`), used for display names
-- `src/api.js`: `POST /process` call and the error messages for each `error_code`
+- `src/api.js`: `POST /process` call, the error messages for each `error_code`, and the PDF/ZIP downloads
 - `src/format.js`: file-size formatting and display labels

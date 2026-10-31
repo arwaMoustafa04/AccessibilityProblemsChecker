@@ -3,7 +3,8 @@ import {
   CLASSIFICATION_LABELS, EVALUATION_LABELS, STATUS_LABELS, issueLabel, label, splitSuggestion,
 } from '../format.js'
 
-export default function FindingCard({ finding }) {
+// Clicking anywhere on the card (or its "Show in PDF" button) selects it for the viewer.
+export default function FindingCard({ finding, selected, onSelect }) {
   const check = CHECKS_BY_ID[finding.check_id]
   const humanReview = finding.classification === 'human_review'
   const { page, object_ref, description } = finding.location
@@ -13,15 +14,25 @@ export default function FindingCard({ finding }) {
   const { details, suggestion } = splitSuggestion(finding.fix_description)
 
   return (
-    <article className={`finding ${humanReview ? 'is-review' : 'is-fixable'}`}>
+    <article
+      className={`finding ${humanReview ? 'is-review' : 'is-fixable'}${selected ? ' is-selected' : ''}`}
+      onClick={onSelect}
+    >
       <header className="finding-header">
         <h3>
           WCAG {finding.wcag_criterion} — {check ? check.name : finding.check_id}
         </h3>
-        <span className={`pill ${humanReview ? 'pill-review' : 'pill-fixable'}`}>
-          <span aria-hidden="true">{humanReview ? '⚠' : '✓'}</span>{' '}
-          {label(CLASSIFICATION_LABELS, finding.classification)}
-        </span>
+        <div className="finding-actions">
+          <span className={`pill ${humanReview ? 'pill-review' : 'pill-fixable'}`}>
+            <span aria-hidden="true">{humanReview ? '⚠' : '✓'}</span>{' '}
+            {label(CLASSIFICATION_LABELS, finding.classification)}
+          </span>
+          {/* No handler of its own: the click reaches the card's onClick. */}
+          <button type="button" className="link-button" data-show-finding={finding.finding_id}
+            aria-pressed={selected}>
+            Show in PDF
+          </button>
+        </div>
       </header>
 
       <dl className="finding-fields">
