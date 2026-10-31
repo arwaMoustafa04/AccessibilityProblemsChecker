@@ -71,10 +71,20 @@ def _test_error(status: int, message: str) -> JSONResponse:
                         content=TestError(message=message, source="system").model_dump())
 
 
+def _is_test_endpoint(request: Request) -> bool:
+    """True for /test/... requests. On the server the app runs under a prefix
+    (uvicorn --root-path /system), so the path is /system/test/...: strip it first."""
+    path = request.url.path
+    root = request.scope.get("root_path", "")
+    if root and path.startswith(root):
+        path = path[len(root):]
+    return path.startswith("/test/")
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     # FastAPI's default is 422; the course spec and the pod spec both use 400.
-    if request.url.path.startswith("/test/"):
+    if _is_test_endpoint(request):
         return _test_error(400, "Invalid request: " + "; ".join(
             str(e.get("msg")) for e in exc.errors()))
     if any("output" in e.get("loc", ()) for e in exc.errors()):
@@ -84,7 +94,7 @@ async def _validation_error(request: Request, exc: RequestValidationError) -> JS
 
 @app.exception_handler(Exception)
 async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
-    if request.url.path.startswith("/test/"):
+    if _is_test_endpoint(request):
         return _test_error(500, "Unexpected system failure.")
     return _error(500, "PROCESSING_ERROR", "Evaluation could not be completed for this file.")
 

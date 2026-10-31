@@ -8,6 +8,7 @@
 #     http://<server-ip>/system  -> the system  (uvicorn main:app, port 8001)
 #     http://<server-ip>/tester  -> the tester  (uvicorn app:app,  port 8002)
 #     http://<server-ip>/        -> the web UI  (frontend/, built and served by nginx)
+#     http://<server-ip>/system  -> also opens the web UI (at /system/ui/); API docs at /system/docs
 # The services start automatically on boot and restart if they crash.
 # Re-run this script after you update the code to reinstall and restart.
 
@@ -118,8 +119,18 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
-    location = /system { return 301 /system/; }
     location = /tester { return 301 /tester/; }
+
+    # Opening the bare /system address in a browser shows the web UI. Testers and
+    # graders only call paths below it (/system/health, /system/process, ...),
+    # which still go to the API above. API docs stay at /system/docs.
+    location = /system    { return 302 /system/ui/; }
+    location = /system/   { return 302 /system/ui/; }
+    location = /system/ui { return 301 /system/ui/; }
+    location ^~ /system/ui/ {
+        alias /var/www/pdf-ui/;
+        index index.html;
+    }
 
     # Web UI: everything that is not /system or /tester.
     root /var/www/pdf-ui;
@@ -149,7 +160,7 @@ curl -fsS -o /dev/null -w "web UI: HTTP %{http_code}\n" http://127.0.0.1/ || ech
 IP="$(curl -fsS --max-time 3 https://checkip.amazonaws.com 2>/dev/null || echo '<server-ip>')"
 cat <<EOF
 
-Done. Web UI (for people):  http://$IP/
+Done. Web UI (for people):  http://$IP/system  (also http://$IP/)
 
 Your registry URLs:
     System base URL: http://$IP/system

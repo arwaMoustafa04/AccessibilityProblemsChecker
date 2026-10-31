@@ -390,5 +390,16 @@ def test_report_unknown_session_is_404() -> None:
     assert response.json()["source"] == "system"
 
 
+def test_test_endpoint_errors_keep_their_format_behind_a_prefix() -> None:
+    """On the server the app runs under /system (uvicorn --root-path /system)."""
+    prefixed = TestClient(app, root_path="/system")
+    setup = prefixed.post("/system/test/setup", json={})
+    assert setup.status_code == 400 and setup.json()["source"] == "system"
+    report = prefixed.get("/system/test/report")
+    assert report.status_code == 400 and report.json()["source"] == "system"
+    missing = prefixed.post("/system/process")
+    assert missing.status_code == 400 and missing.json()["error_code"] == "MISSING_FILE"
+
+
 def test_report_without_session_id_is_400() -> None:
     assert client.get("/test/report").status_code == 400
