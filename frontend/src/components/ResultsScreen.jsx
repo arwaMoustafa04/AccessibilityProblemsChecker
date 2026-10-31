@@ -7,6 +7,8 @@ import FindingCard from './FindingCard.jsx'
 export default function ResultsScreen({ result, onRestart }) {
   const { input, checks_performed, findings, summary, limitations, compliance_statement } = result
   const performed = new Set(checks_performed)
+  const findingCounts = {}
+  for (const f of findings) findingCounts[f.check_id] = (findingCounts[f.check_id] ?? 0) + 1
   const autoFixable = findings.filter((f) => f.classification === 'auto_fixable').length
   const humanReview = findings.filter((f) => f.classification === 'human_review').length
 
@@ -53,12 +55,15 @@ export default function ResultsScreen({ result, onRestart }) {
           <ul className="check-list">
             {CHECKS.map((c) => {
               const ran = performed.has(c.check_id)
+              const count = findingCounts[c.check_id] ?? 0
               return (
                 <li key={c.check_id} className={ran ? 'ran' : 'not-ran'}>
                   <span className="check-mark" aria-hidden="true">{ran ? '✓' : '–'}</span>
                   <span>
                     {c.name} <span className="muted">({c.wcag_criterion})</span>
-                    {!ran && <span className="not-ran-label"> — not performed</span>}
+                    {ran
+                      ? <span className="muted"> — {count === 1 ? '1 finding' : `${count} findings`}</span>
+                      : <span className="not-ran-label"> — not performed</span>}
                   </span>
                 </li>
               )

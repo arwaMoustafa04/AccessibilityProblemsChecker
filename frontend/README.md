@@ -27,27 +27,26 @@ API_PROXY_TARGET=http://3.15.117.84/system npm run dev
 To call an API directly (e.g. in a production build), set `VITE_API_URL` to its base
 URL at build time; that server must then allow CORS from the UI's origin.
 
-The API currently runs CHK-TITLE, CHK-LANG and CHK-HEADINGS; the other five checks
-are shown as "not performed" and listed under Limitations. The results screen can
+The API runs CHK-NONTEXT (images and alternative text) and CHK-STRUCTURE (tags and
+table headers). Each finding card shows its result (**Fail** or **Needs Review**), its
+page or "Whole document", and the PDF object it refers to (e.g.
+`Catalog/StructTreeRoot/K[0]/K[0]`). Checks Performed lists how many findings each check
+produced; checks the API did not run are shown as "not performed" and listed under
+Limitations. The results screen can
 download the report PDF and the output PDF that `/process` returns.
-
-In `npm run dev`, a dark "Preview" bar at the top lets you jump between the
-screens (Upload, Upload + error, Processing, Results with sample data). It is not included in the
-production build.
 
 ## Screens
 
 1. **Upload**: drag-and-drop or file picker, file name and size, error message area, Analyze PDF button.
 2. **Processing**: "Analyzing PDF…" with the steps Validating → Checking accessibility → Classifying findings.
-3. **Results**: summary counts, finding cards, checks performed (with checks that did not run marked), limitations, the compliance disclaimer, and Analyze Another PDF.
+3. **Results**: summary counts, finding cards (issue, result, location, PDF object, status), checks performed (with checks that did not run marked), limitations, the compliance disclaimer, and Analyze Another PDF.
 
 The UI only displays what `/process` returns; it never decides accessibility itself.
 
 ## Files
 
-- `src/App.jsx`: which screen is shown, plus the development preview bar
+- `src/App.jsx`: which screen is shown
 - `src/components/UploadScreen.jsx`, `ProcessingScreen.jsx`, `ResultsScreen.jsx`, `FindingCard.jsx`
 - `src/data/checks.js`: the 8 agreed checks (same as `catalog.py` / `GET /checks`), used for display names
 - `src/api.js`: `POST /process` call and the error messages for each `error_code`
-- `src/data/mockResult.js`: sample response, used only by the dev preview bar
 - `src/format.js`: file-size formatting and display labels

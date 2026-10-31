@@ -148,6 +148,10 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .finding-fields .full { grid-column: 1 / -1; }
 .finding-fields dt { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
 .finding-fields dd { margin: 0; }
+.object-ref { overflow-wrap: anywhere; color: var(--muted); }
+.result { font-weight: 600; }
+.result-fail { color: var(--error); }
+.result-needs_review { color: var(--review); }
 
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 .check-list, .bullets { margin: 0; padding: 0; }
@@ -166,11 +170,3 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
   .two-col, .finding-fields { grid-template-columns: 1fr; }
   .finding-header { flex-direction: column; gap: 0.4rem; }
 }
-
-/* Development-only preview bar */
-.dev-preview {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
-  padding: 0.5rem 1rem; background: #2b2f3a; color: #fff; font-size: 0.85rem;
-}
-.dev-preview button { font: inherit; padding: 0.2rem 0.6rem; border-radius: 6px; border: 1px solid #5a6273; background: transparent; color: #fff; cursor: pointer; }
-.dev-preview button[aria-pressed='true'] { background: #fff; color: #2b2f3a; }

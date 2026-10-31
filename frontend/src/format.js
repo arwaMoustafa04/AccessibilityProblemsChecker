@@ -19,6 +19,13 @@ export const STATUS_LABELS = {
   needs_human_review: 'Needs Human Review',
 }
 
+// Finding.evaluation_result: "fail" is a definite problem; "needs_review" means a
+// person has to look (e.g. an image whose alternative text could not be resolved).
+export const RESULT_LABELS = {
+  fail: 'Fail',
+  needs_review: 'Needs Review',
+}
+
 export const label = (map, value) => map[value] ?? value
 
 // The API's issue_type is snake_case (e.g. "title_missing"); show it as words.
