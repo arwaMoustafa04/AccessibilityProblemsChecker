@@ -4,5 +4,6 @@ pydantic==2.12.3
 uvicorn==0.38.0
 python-multipart==0.0.32
 pikepdf==10.13.0.post1
+pymupdf==1.28.2
 reportlab==5.0.1
 coverage==7.16.2

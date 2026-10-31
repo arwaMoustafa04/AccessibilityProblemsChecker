@@ -16,14 +16,35 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_USER="$(id -un)"
 VENV="$APP_DIR/.venv"
 
-echo "==> Installing system packages (python, nginx)"
+echo "==> Installing system packages (python, nginx, curl)"
 sudo apt-get update -y
-sudo apt-get install -y python3 python3-venv python3-pip nginx
+sudo apt-get install -y python3 python3-venv python3-pip nginx curl
 
 echo "==> Creating Python environment in $VENV"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip
 "$VENV/bin/pip" install -r "$APP_DIR/requirements.txt" -r "$APP_DIR/tester/requirements.txt"
+
+# veraPDF (PDF/UA-1 validator, used by the checks). Optional: if this step fails,
+# the service still works and each response says veraPDF was not used.
+# Skip it with:  SKIP_VERAPDF=1 bash deploy/setup.sh
+VERAPDF_DIR=/opt/verapdf
+if [ "${SKIP_VERAPDF:-0}" != "1" ] && [ ! -x "$VERAPDF_DIR/verapdf" ]; then
+    echo "==> Installing Java and veraPDF into $VERAPDF_DIR"
+    if sudo apt-get install -y openjdk-17-jre-headless unzip \
+        && TMP="$(mktemp -d)" \
+        && curl -fsSL -o "$TMP/verapdf.zip" https://software.verapdf.org/rel/verapdf-installer.zip \
+        && unzip -q "$TMP/verapdf.zip" -d "$TMP" \
+        && sudo "$(ls -d "$TMP"/verapdf-greenfield-*)/verapdf-install" "$APP_DIR/deploy/verapdf-auto-install.xml"; then
+        echo "veraPDF installed: $("$VERAPDF_DIR/verapdf" --version 2>/dev/null | head -1)"
+    else
+        echo "WARNING: veraPDF could not be installed; checks will run without it."
+    fi
+fi
+VERAPDF_ENV=""
+if [ -x "$VERAPDF_DIR/verapdf" ]; then
+    VERAPDF_ENV="Environment=VERAPDF_PATH=$VERAPDF_DIR/verapdf"
+fi
 
 echo "==> Creating services"
 sudo tee /etc/systemd/system/pdf-system.service > /dev/null <<EOF
@@ -34,6 +55,7 @@ After=network.target
 [Service]
 User=$APP_USER
 WorkingDirectory=$APP_DIR
+$VERAPDF_ENV
 ExecStart=$VENV/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --root-path /system --no-access-log
 Restart=always
 
@@ -62,7 +84,7 @@ server {
     listen 80 default_server;
     server_name _;
 
-    client_max_body_size 25m;     # 20 MB PDFs plus form overhead
+    client_max_body_size 100m;    # larger than 20 MB, so the app (not nginx) returns the JSON 413
     proxy_read_timeout 900s;      # a full tester run can take minutes
     proxy_send_timeout 900s;
 

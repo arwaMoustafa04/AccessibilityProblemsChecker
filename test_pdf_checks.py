@@ -41,25 +41,27 @@ def test_fixture_oracles_and_reproducibility(case):
 
 
 @pytest.mark.parametrize("case", CASES)
-def test_endpoint_review_contract(case, monkeypatch):
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", False)
+def test_endpoint_review_contract(case):
     data = make_fixture(case)
     response = TestClient(app).post("/process", files={"file": (case + ".pdf", data, "application/pdf")})
     assert response.status_code == 200
     body = response.json()
     findings = body["findings"]
-    assert [f["issue_type"] for f in findings] == EXPECTED[case]
-    assert body["checks_performed"] == ["CHK-NONTEXT", "CHK-STRUCTURE"]
-    assert body["human_review_items"] == [f["finding_id"] for f in findings]
+    # The fixtures have no title or language, so other checks report those too.
+    mine = [f for f in findings if f["check_id"] in {"CHK-NONTEXT", "CHK-STRUCTURE"}]
+    assert [f["issue_type"] for f in mine] == EXPECTED[case]
+    assert {"CHK-NONTEXT", "CHK-STRUCTURE"} <= set(body["checks_performed"])
+    assert body["human_review_items"] == [
+        f["finding_id"] for f in findings if f["classification"] == "human_review"]
     assert all(f["classification"] == "human_review" and f["status"] == "needs_human_review"
-               and f["fix_description"] is None for f in findings)
-    for finding in findings:
+               and f["fix_description"] for f in mine)
+    for finding in mine:
         expected = "fail" if finding["issue_type"] in {
             "missing_figure_alt", "missing_document_structure"} else "needs_review"
         assert finding["evaluation_result"] == expected
         assert finding["location"]["object_ref"]
     assert body["summary"] == {"total_issues": len(findings), "fixed_count": 0,
-                               "human_review_count": len(findings)}
+                               "human_review_count": len(body["human_review_items"])}
     assert body["repairs"] == body["new_issues_after_repair"] == []
     assert body["outcome"] == "completed_no_repairs"
     assert body["output_pdf"]["modified"] is False
@@ -191,18 +193,24 @@ def test_incomplete_inspection_is_a_review_finding(kind):
 
 
 def test_mixed_repairs_and_review_findings(monkeypatch):
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
     with pikepdf.open(io.BytesIO(make_fixture("combined"))) as pdf:
-        del pdf.docinfo["/Title"]
-        del pdf.Root.Lang
+        if "/Title" in pdf.docinfo:
+            del pdf.docinfo["/Title"]
+        if "/Lang" in pdf.Root:
+            del pdf.Root.Lang
         data = io.BytesIO()
         pdf.save(data)
-    result = pipeline.run_pipeline(data.getvalue(), "mixed.pdf")
-    assert result.summary.total_issues == 4
-    assert result.summary.fixed_count == result.summary.human_review_count == 2
-    assert len(result.repairs) == 2
+    result = pipeline.run_pipeline(data.getvalue(), "annual_report.pdf")
+    review = [f for f in result.findings if f.check_id in {"CHK-NONTEXT", "CHK-STRUCTURE"}]
+    fixable = [f for f in result.findings if f.classification == "auto_fixable"]
+    assert [f.issue_type for f in review] == ["missing_figure_alt", "table_missing_headers"]
+    assert all(f.status == "needs_human_review" for f in review)
+    assert fixable and all(f.status == "fixed" for f in fixable)
+    assert result.summary.fixed_count == len(fixable) == len(result.repairs)
     assert all(r.validation_result == "passed" for r in result.repairs)
-    assert len(result.human_review_items) == 2
+    assert {f.finding_id for f in review} <= set(result.human_review_items)
+    # Saving the repaired copy must not make existing issues look new.
     assert result.new_issues_after_repair == []
 
 
@@ -219,13 +227,18 @@ def test_inline_image_in_tagged_figure():
 
 
 def test_revalidation_distinguishes_same_type_at_different_locations(monkeypatch):
-    from pdf_checks import Issue
-    first = Issue("CHK-TITLE", "missing_document_title", "first", "Title", page=1)
-    second = Issue("CHK-TITLE", "missing_document_title", "second", "Title", page=2)
-    new = Issue("CHK-NONTEXT", "missing_figure_alt", "new_figure", "Figure", page=1)
+    from checks import CheckRun
+    from checks.base import CheckContext, Issue
+    first = Issue("CHK-TITLE", "missing_document_title", "Title", page=1, object_ref="first")
+    second = Issue("CHK-TITLE", "missing_document_title", "Title", page=2, object_ref="second")
+    new = Issue("CHK-NONTEXT", "missing_figure_alt", "Figure", page=1, object_ref="new_figure")
     results = iter([[first, second], [second, new]])
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
-    monkeypatch.setattr(pipeline, "detect_issues", lambda pdf: next(results))
+
+    def evaluate(data, file_name, pdf):
+        return (CheckRun(performed=["CHK-NONTEXT", "CHK-TITLE"], issues=next(results)),
+                CheckContext(data, file_name, pdf))
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
+    monkeypatch.setattr(pipeline, "evaluate", evaluate)
     monkeypatch.setattr(pipeline, "repair", lambda *args: {"missing_document_title": "Set title"})
     result = pipeline.run_pipeline(make_fixture("tagged_image"), "same_type.pdf")
     assert [f.status for f in result.findings] == ["fixed", "repair_failed"]

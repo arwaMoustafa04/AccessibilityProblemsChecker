@@ -27,12 +27,12 @@ API_PROXY_TARGET=http://3.15.117.84/system npm run dev
 To call an API directly (e.g. in a production build), set `VITE_API_URL` to its base
 URL at build time; that server must then allow CORS from the UI's origin.
 
-The API runs CHK-NONTEXT (images and alternative text) and CHK-STRUCTURE (tags and
-table headers). Each finding card shows its result (**Fail** or **Needs Review**), its
-page or "Whole document", and the PDF object it refers to (e.g.
-`Catalog/StructTreeRoot/K[0]/K[0]`). Checks Performed lists how many findings each check
-produced; checks the API did not run are shown as "not performed" and listed under
-Limitations. The results screen can
+The API runs all eight agreed checks. Each finding card shows the issue, its result
+(**Fail** or **Needs Review**), its location (page, or e.g. "Whole document"), the
+check, its status, the PDF object it refers to (e.g. `Catalog/StructTreeRoot/K[0]/K[0]`),
+the details and, when the API gives one, a suggested fix. Checks Performed lists how
+many findings each check produced; a check the API did not run is shown as "not
+performed" and listed under Limitations. The results screen can
 download the report PDF and the output PDF that `/process` returns.
 
 ## Screens

@@ -180,14 +180,13 @@ def test_tester_abort_keeps_partial_report(target, monkeypatch) -> None:
 
 
 def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
-    """The early title/language work, switched on, passes the Phase 5 test too."""
+    """The Phase 5 repair path, switched on, passes the Phase 5 test too."""
     import pipeline
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
     monkeypatch.setattr(suite, "CURRENT_PHASE", 5)
     sid = setup_session()
     report = tester.post("/test/run", json={"session_id": sid}).json()
     check_report_format(report)
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-    # Four human-review checks remain unimplemented, so full detection (T-13) still fails.
-    assert outcomes.pop("T-13") == "fail"
+    # All eight checks are registered, so full detection (T-13) passes too.
     assert set(outcomes.values()) == {"pass"}

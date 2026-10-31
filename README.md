@@ -2,7 +2,15 @@
 
 Team 1 (West Lafayette, Pod D) implementation of the pod's shared PDF accessibility
 service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WCAG 2.1 AA).
-This README describes the Phase 3 interface plus the implemented image and structure checks.
+`POST /process` runs all eight agreed checks, registered in `checks/__init__.py`:
+non-text content and structure (`pdf_checks.py`), sensory, color and link
+(Person 2), and title, language and headings (Person 3). Automatic repair remains
+disabled by default. The deployed server has not been updated with this version.
+
+See [`checks/README.md`](checks/README.md) for each check, and
+[Person 2 fixtures and tests](test_fixtures/person2/README.md) for the sensory,
+color and link rules. The Phase 3 deployment history below describes the earlier
+delivered increment.
 
 ## Deployed services
 
@@ -67,8 +75,8 @@ Course test endpoints:
 
 ### What `/process` does now
 
-The interface and upload validation are complete. CHK-NONTEXT and CHK-STRUCTURE
-run on every upload; the remaining checks are incomplete or disabled.
+The interface and upload validation are complete. All eight checks run on every
+upload (see [`checks/README.md`](checks/README.md)); the image and structure checks are:
 
 - **Input validation is complete:** no file → 400 `MISSING_FILE`; over 20 MB
   (20,971,520 bytes) → 413 `FILE_TOO_LARGE`; no `%PDF-` header in the first 1024 bytes
@@ -84,11 +92,11 @@ run on every upload; the remaining checks are incomplete or disabled.
   Missing/empty structure is `fail`; marker, relationship and header concerns are
   `needs_review`. Nested tables are inspected separately.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
-  and finding IDs in `human_review_items`. They never trigger repairs. The original
-  PDF is returned byte-for-byte unchanged unless flagged title/language repair runs.
-  JSON and report PDF include performed checks, findings, locations and limitations.
-- Title/language detection and repair remain opt-in via `ENABLE_TITLE_LANG_CHECKS=true`.
-  `checks_performed` lists only enabled checks; disabled checks appear in limitations.
+  and finding IDs in `human_review_items`. They never trigger repairs.
+- CHK-TITLE and CHK-LANG findings are `auto_fixable` and reported as `detected`;
+  automatic repair is opt-in via `ENABLE_REPAIRS=true`. Without it the original PDF
+  is returned byte-for-byte unchanged. JSON and report PDF include performed checks,
+  findings, locations and limitations.
 - PDFs are processed in memory and never stored.
 
 ## Tester (`tester/` folder)
@@ -138,8 +146,9 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
   is not treated as a Figure `/Alt` replacement. Malformed/cyclic data produces review
   findings for incomplete inspection. Tree depth over 128, more than 100,000 structure
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
-- CHK-SENSORY, CHK-COLOR, CHK-LINK and CHK-HEADINGS are unimplemented. Title/language
-  detection and repair remain behind `ENABLE_TITLE_LANG_CHECKS` (off by default).
+- CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
+  targets; these heuristics can miss issues or flag acceptable content. Automatic
+  repair remains behind `ENABLE_REPAIRS` (off by default).
 - **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
   conformance; human-review items are never repaired automatically.
 - **Sessions are in memory** (system and tester): they are lost when a service
@@ -153,8 +162,9 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 ## Code layout
 
 - `main.py`: HTTP routes, error handling, request logging
-- `pipeline.py`: input validation, findings, report PDF, gated title/language repair
-- `pdf_checks.py`: image and document/table structure inspection
+- `pipeline.py`: input validation, runs the registered checks, findings, report PDF, gated repair
+- `checks/`: the check registry and one module per check (see `checks/README.md`)
+- `pdf_checks.py`: image and document/table structure inspection (CHK-NONTEXT, CHK-STRUCTURE)
 - `catalog.py`: the 8 agreed checks
 - `models.py`: request/response models matching `openapi.yaml`
 - `sessions.py`: test sessions and per-session code coverage (coverage.py)
@@ -173,8 +183,8 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 custom roles, MCID scoping, artifacts, repeated images, table nesting, response/report
 contents, and mixed review findings with flagged automatic repairs.
 
-The shared cross-team tester remains in Phase 3: T-13 requires other unimplemented
-checks too. Its phase and shared fixtures have not changed.
+With all eight checks registered, the shared tester's full-detection test (T-13)
+passes; its phase setting and shared fixtures have not changed.
 
 ## Run locally
 

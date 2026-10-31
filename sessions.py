@@ -14,13 +14,15 @@ from typing import Any
 
 _coverage: Any
 try:
-    import coverage as _coverage
+    import coverage
+
+    _coverage = coverage
 except ImportError:  # coverage is optional; report null counts without it
     _coverage = None
 
 SOURCE_DIR = Path(__file__).resolve().parent
-MEASURED_FILES = sorted(
-    str(p) for p in SOURCE_DIR.glob("*.py")
+MEASURED_FILES = sorted(  # this service's modules, including the checks/ package
+    str(p) for p in [*SOURCE_DIR.glob("*.py"), *SOURCE_DIR.glob("checks/*.py")]
     if not p.name.startswith("test_") and p.name != "conftest.py"
 )
 BASIS = ("Source lines of this service's Python modules executed while handling "

@@ -21,12 +21,20 @@ export const STATUS_LABELS = {
 
 // Finding.evaluation_result: "fail" is a definite problem; "needs_review" means a
 // person has to look (e.g. an image whose alternative text could not be resolved).
-export const RESULT_LABELS = {
+export const EVALUATION_LABELS = {
   fail: 'Fail',
   needs_review: 'Needs Review',
 }
 
 export const label = (map, value) => map[value] ?? value
+
+// The API appends " Suggested fix: ..." to fix_description; show it as its own field.
+export const splitSuggestion = (text) => {
+  const marker = ' Suggested fix: '
+  const at = (text ?? '').indexOf(marker)
+  if (at === -1) return { details: text, suggestion: null }
+  return { details: text.slice(0, at), suggestion: text.slice(at + marker.length) }
+}
 
 // The API's issue_type is snake_case (e.g. "title_missing"); show it as words.
 export const issueLabel = (issueType) => {
