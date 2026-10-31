@@ -7,7 +7,8 @@
 # Result:
 #     http://<server-ip>/system  -> the system  (uvicorn main:app, port 8001)
 #     http://<server-ip>/tester  -> the tester  (uvicorn app:app,  port 8002)
-# Both start automatically on boot and restart if they crash.
+#     http://<server-ip>/        -> the web UI  (frontend/, built and served by nginx)
+# The services start automatically on boot and restart if they crash.
 # Re-run this script after you update the code to reinstall and restart.
 
 set -euo pipefail
@@ -41,6 +42,25 @@ if [ "${SKIP_VERAPDF:-0}" != "1" ] && [ ! -x "$VERAPDF_DIR/verapdf" ]; then
         echo "WARNING: veraPDF could not be installed; checks will run without it."
     fi
 fi
+# Web UI (frontend/): built with Node and served by nginx at http://<server-ip>/.
+# It calls the API at /system on the same server, so no CORS setup is needed.
+# Optional: if this step fails, the API and tester still deploy.
+# Skip it with:  SKIP_UI=1 bash deploy/setup.sh
+UI_DIR=/var/www/pdf-ui
+if [ "${SKIP_UI:-0}" != "1" ]; then
+    echo "==> Building the web UI into $UI_DIR"
+    if ! command -v npm > /dev/null || [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -lt 18 ]; then
+        sudo apt-get install -y nodejs npm
+    fi
+    if (cd "$APP_DIR/frontend" && npm ci --no-audit --no-fund && VITE_API_URL=/system npm run build) \
+        && sudo rm -rf "$UI_DIR" && sudo mkdir -p "$UI_DIR" \
+        && sudo cp -r "$APP_DIR/frontend/dist/." "$UI_DIR/"; then
+        echo "Web UI built."
+    else
+        echo "WARNING: the web UI could not be built; the API and tester still work."
+    fi
+fi
+
 VERAPDF_ENV=""
 if [ -x "$VERAPDF_DIR/verapdf" ]; then
     VERAPDF_ENV="Environment=VERAPDF_PATH=$VERAPDF_DIR/verapdf"
@@ -78,7 +98,7 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-echo "==> Configuring nginx (/system and /tester)"
+echo "==> Configuring nginx (/system, /tester and the web UI at /)"
 sudo tee /etc/nginx/sites-available/pdf-accessibility > /dev/null <<'EOF'
 server {
     listen 80 default_server;
@@ -100,6 +120,15 @@ server {
     }
     location = /system { return 301 /system/; }
     location = /tester { return 301 /tester/; }
+
+    # Web UI: everything that is not /system or /tester.
+    root /var/www/pdf-ui;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    location /assets/ {
+        expires 7d;   # built file names change on every build, so caching is safe
+    }
 }
 EOF
 sudo ln -sf /etc/nginx/sites-available/pdf-accessibility /etc/nginx/sites-enabled/pdf-accessibility
@@ -115,11 +144,14 @@ sleep 3
 echo "==> Checking"
 curl -fsS http://127.0.0.1/system/health && echo
 curl -fsS -o /dev/null -w "tester docs: HTTP %{http_code}\n" http://127.0.0.1/tester/docs
+curl -fsS -o /dev/null -w "web UI: HTTP %{http_code}\n" http://127.0.0.1/ || echo "web UI: not available"
 
 IP="$(curl -fsS --max-time 3 https://checkip.amazonaws.com 2>/dev/null || echo '<server-ip>')"
 cat <<EOF
 
-Done. Your registry URLs:
+Done. Web UI (for people):  http://$IP/
+
+Your registry URLs:
     System base URL: http://$IP/system
     Tester base URL: http://$IP/tester
 
