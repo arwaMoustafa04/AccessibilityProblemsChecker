@@ -12,8 +12,8 @@ level and classification (auto_fixable / human_review) come from `catalog.py`.
 | CHK-SENSORY (1.3.3) | `sensory.py` | English instruction/sensory text cues, page locations |
 | CHK-COLOR (1.4.1) | `color.py` | English color/meaning cues and multicolor vector graphics |
 | CHK-LINK (2.4.4) | `link.py` | pikepdf annotations/tagged alternatives, PyMuPDF labels, veraPDF PDF/UA-1 7.18.5 |
-| CHK-NONTEXT (1.1.1) | `nontext.py` → `pdf_checks.py` | pikepdf (Figure /Alt, images in page content, Form XObjects, inline images) |
-| CHK-STRUCTURE (1.3.1) | `structure.py` → `pdf_checks.py` | pikepdf (structure tree, MarkInfo, relationships, table headers) |
+| CHK-NONTEXT (1.1.1) | `nontext.py` → `pdf_checks.py` | pikepdf (Figure /Alt, images in page content, Form XObjects, inline images), veraPDF 7.3 |
+| CHK-STRUCTURE (1.3.1) | `structure.py` → `pdf_checks.py` | pikepdf (structure tree, MarkInfo, relationships, table headers), veraPDF 7.1 tagging and 7.5 tables |
 
 Person 2 behavior, reproducible PDFs and test expectations are documented in
 [`test_fixtures/person2/README.md`](../test_fixtures/person2/README.md). These

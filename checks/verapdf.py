@@ -104,3 +104,12 @@ def run_verapdf(data: bytes) -> VeraReport:
         return VeraReport(True, parse_mrr(proc.stdout))
     except ET.ParseError:
         return VeraReport(False, error="veraPDF report could not be read")
+
+
+def cite_rule(issue, rule: RuleFailure) -> None:
+    """Mark an existing Issue as confirmed by a veraPDF rule (once per rule)."""
+    if "veraPDF" not in issue.sources:
+        issue.sources.append("veraPDF")
+    note = f"veraPDF PDF/UA-1 rule {rule.rule_id}"
+    if note not in (issue.suggestion or ""):
+        issue.suggestion = f"{issue.suggestion} ({note})" if issue.suggestion else f"({note})"

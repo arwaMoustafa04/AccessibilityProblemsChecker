@@ -23,7 +23,7 @@ import httpx
 import pikepdf
 
 # Tests planned for a later phase are reported as "skip" until the pod reaches it.
-CURRENT_PHASE = 3
+CURRENT_PHASE = 4
 
 PROJECT_CALL_TIMEOUT_SECONDS = 60.0
 MAX_FILE_SIZE_BYTES = 20_971_520
