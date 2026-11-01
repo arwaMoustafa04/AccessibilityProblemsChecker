@@ -5,26 +5,29 @@ service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WC
 `POST /process` runs all eight agreed checks, registered in `checks/__init__.py`:
 non-text content and structure (`pdf_checks.py`), sensory, color and link
 (Person 2), and title, language and headings (Person 3). Automatic repair remains
-disabled by default. The deployed server has not been updated with this version.
+disabled by default (Phase 5). This README describes the system **as delivered at the
+end of Phase 4**, which is the version deployed at the URLs below.
 
 See [`checks/README.md`](checks/README.md) for each check, and
 [Person 2 fixtures and tests](test_fixtures/person2/README.md) for the sensory,
-color and link rules. The Phase 3 deployment history below describes the earlier
-delivered increment.
+color and link rules.
 
 ## Deployed services
 
 | | URL |
 |---|---|
+| Web UI | http://3.15.117.84/system (also http://3.15.117.84/) |
 | System base URL | http://3.15.117.84/system |
 | System interactive docs | http://3.15.117.84/system/docs |
 | Tester base URL | http://3.15.117.84/tester |
 | Tester interactive docs | http://3.15.117.84/tester/docs |
-| Pod specification (system contract) | [`openapi.yaml`](openapi.yaml), shared spec v0.3.0, agreed with Team 3 |
+| Pod specification (system contract) | [`openapi.yaml`](openapi.yaml), shared spec v0.4.0, agreed with Team 3 |
 | Tester contract | [`tester/openapi.yaml`](tester/openapi.yaml) |
 
-Opening a base URL in a browser redirects to its docs page. Both apps run on one AWS
-EC2 instance (t3.micro, Ubuntu 24.04, us-east-2, Elastic IP) behind nginx; see
+Opening the system base URL in a browser shows the web UI; the tester base URL opens
+its docs page. Testers only call paths below the base URLs, so this does not affect
+them. Everything runs on one AWS EC2 instance (t3.micro, Ubuntu 24.04, us-east-2,
+Elastic IP) behind nginx, with veraPDF (Java) on the same instance; see
 [Deployment](#deployment).
 
 **Access / run notes (as in the registry):** no authentication. Base URLs have no
@@ -32,24 +35,35 @@ trailing slash. Maximum times: system `/test/setup` 10 s; tester `/test/setup` 1
 tester `/test/run` at most 14 project calls × 60 s plus 10 s for the target's
 `/test/report` (≈ 15 min worst case); a normal run against our system takes a few seconds.
 
-## Architecture (Phase 3)
+## Architecture
 
-![System architecture, Phase 3](model.png)
+`POST /process` in Phase 4: nginx forwards `/system/...` to the FastAPI app, which
+validates the upload (400/413/415/422), opens the PDF once into a shared check context
+(pikepdf, PyMuPDF and one veraPDF PDF/UA-1 run), runs the eight registered checks in
+catalog order, classifies each finding from `catalog.py`, locates it on its page
+(`checks/locate.py`, `Location.bbox`), names any check that did not run in `limitations`,
+builds the report PDF, and returns JSON (or one zip with `output=zip`). The React UI,
+served by nginx, calls the same endpoint and highlights findings in a PDF viewer.
 
-![POST /process flow, Phase 3](model1.png)
+![Deployment and component model, Phase 4](docs/architecture-phase4.png)
+
+![POST /process processing flow, Phase 4](docs/process-flow-phase4.png)
+
+The Phase 3 versions of these models (validation only) are kept as `model.png` and
+`model1.png` for comparison.
 
 ## System interface
 
-The contract is `openapi.yaml` (OpenAPI 3.0.3, spec v0.3.0). Both pod teams build to
+The contract is `openapi.yaml` (OpenAPI 3.0.3, spec v0.4.0). Both pod teams build to
 it, so if it changes, update it here, bump the version and send it to Team 3.
 
 Project API:
 
 | Endpoint | What it does |
 |---|---|
-| `GET /health` | `{"status": "ok", "spec_version": "0.3.0"}` |
+| `GET /health` | `{"status": "ok", "spec_version": "0.4.0"}` |
 | `GET /checks` | `{"checks": [...]}`, the 8 agreed checks (`check_id`, `name`, `wcag_criterion`, `wcag_level`, `classification`) |
-| `POST /process` | Multipart upload: field `file` (the PDF) and optional `session_id`. Returns an `EvaluationResult` with the output PDF and a report PDF in Base64 |
+| `POST /process` | Multipart upload: field `file` (the PDF), optional `session_id`, optional `output` (`json`, the default, or `zip`). Returns an `EvaluationResult` with findings (each with an optional `location.bbox`), the output PDF and a report PDF in Base64; with `output=zip`, one zip with `original.pdf`, the output PDF, the report PDF and `result.json` |
 
 Course test endpoints:
 
@@ -72,7 +86,8 @@ Course test endpoints:
   viewer can highlight the finding; `checks/locate.py` fills it where the position is known.
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
   `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `CORRUPTED_PDF`, `UNREADABLE_PDF`,
-  `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `PROCESSING_ERROR`, `EXTERNAL_SERVICE_UNAVAILABLE`.
+  `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `INVALID_REQUEST` (an `output` value other than
+  `json` or `zip`), `PROCESSING_ERROR`, `EXTERNAL_SERVICE_UNAVAILABLE`.
 - **SessionRef / SystemReport / TestError**: the course test-interface bodies.
 
 ### What `/process` does now
@@ -136,8 +151,10 @@ Named files are the team's shared test set in `tester/fixtures/` (its README giv
 file's expected result); the no-file, corrupted and exact-size cases are generated in code.
 Tests for later phases report `skip` until `CURRENT_PHASE` in `tester/suite.py` reaches them.
 
-**Historical Phase 3 result against our deployed system:** 12 pass, 2 skip (T-13, T-14);
-component coverage 4/8, system (acceptance-criteria) coverage 5/10.
+**Phase 4 result against our deployed system (Oct 31, 2026):** 13 pass, 0 fail, 1 skip
+(T-14, repair, Phase 5); component coverage 6/8, system (acceptance-criteria) coverage
+8/10. `contract_report.py` against the deployed system: all responses conform.
+(Phase 3: 12 pass, 2 skip; 4/8 components, 5/10 acceptance criteria.)
 
 ## Known limitations
 
@@ -150,7 +167,19 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
 - CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
   targets; these heuristics can miss issues or flag acceptable content. Automatic
-  repair remains behind `ENABLE_REPAIRS` (off by default).
+  repair remains behind `ENABLE_REPAIRS` (off by default), so auto-fixable findings are
+  reported as `detected` and the output PDF is the unchanged upload.
+- **Scanned or image-only PDFs** are not really evaluated: there is no OCR, so the
+  text-based checks find nothing on pages without a text layer.
+- **Speed:** veraPDF adds about 2-4 s per `/process` call, and processing time grows
+  with page count (about 4 ms per page). Very long documents (several thousand pages)
+  approach the tester's 60 s per-call limit.
+- **Highlights are best-effort:** `location.bbox` is null when only the page (or
+  nothing) is known, e.g. document-level title and language findings.
+- **Language tags** are checked for format only; a well-formed but wrong language is
+  not detected.
+- **All encrypted PDFs** are rejected with 422, including ones that open without a
+  password (agreed spec behavior).
 - **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
   conformance; human-review items are never repaired automatically.
 - **Sessions are in memory** (system and tester): they are lost when a service
@@ -159,7 +188,7 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
   no rate limiting, no redundancy.
 - **500 / 503 responses** are in the contract but cannot be triggered from outside,
   so they are not exercised by the tester or the conformance report.
-- Uploads are limited to 20 MB (nginx allows 25 MB so the 413 comes from the app).
+- Uploads are limited to 20 MB (nginx allows 100 MB, so the 413 comes from the app as JSON).
 
 ## Code layout
 
@@ -174,7 +203,8 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 - `contract_report.py`: contract-conformance table for any deployed system
 - `tester/app.py`: tester endpoints, sessions, report, coverage aggregation
 - `tester/suite.py`: the 14 test cases
-- `deploy/setup.sh`: EC2 install (venv, systemd services, nginx)
+- `deploy/setup.sh`: EC2 install (venv, veraPDF, UI build, systemd services, nginx)
+- `frontend/`: React + Vite web UI (upload, results, PDF viewer with highlights)
 - `.github/workflows/ci.yml`: ruff, mypy, OpenAPI validation, pip-audit, pytest, conformance report, full tester run
 
 ## Focused check fixtures and tests
@@ -186,8 +216,8 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
 custom roles, MCID scoping, artifacts, repeated images, table nesting, response/report
 contents, and mixed review findings with flagged automatic repairs.
 
-With all eight checks registered, the shared tester's full-detection test (T-13)
-passes; its phase setting and shared fixtures have not changed.
+With all eight checks registered and `CURRENT_PHASE = 4` in `tester/suite.py`, the
+shared tester's full-detection test (T-13) runs and passes.
 
 ## Run locally
 
@@ -217,10 +247,13 @@ python contract_report.py http://3.15.117.84/system        # contract conformanc
 
 ## Deployment
 
-On the EC2 instance, from the unzipped repo: `bash deploy/setup.sh`. It installs Python
-and nginx, creates the venv, and sets up two systemd services (`pdf-system` on port
-8001, `pdf-tester` on 8002) that restart automatically. nginx maps `/system/` and
-`/tester/` to them, with `client_max_body_size 25m` and a 900 s read timeout.
+On the EC2 instance, from the unzipped repo: `bash deploy/setup.sh`. It installs Python,
+nginx, Java and veraPDF (`/opt/verapdf`), creates the venv, builds the React UI into
+`/var/www/pdf-ui`, and sets up two systemd services (`pdf-system` on port 8001,
+`pdf-tester` on 8002) that restart automatically. nginx maps `/system/` and `/tester/`
+to them, serves the UI at `/system/ui/` (the bare `/system` redirects there) and at `/`,
+with `client_max_body_size 100m` and a 900 s read timeout. The veraPDF and UI steps are
+optional (`SKIP_VERAPDF=1`, `SKIP_UI=1`); if one fails, the API and tester still deploy.
 Logs: `sudo journalctl -u pdf-system -u pdf-tester`.
 
 Lambda/API Gateway is not used: its payload limits (6 MB / 10 MB) are below 20 MB.
