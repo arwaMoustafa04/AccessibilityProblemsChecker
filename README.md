@@ -45,9 +45,9 @@ catalog order, classifies each finding from `catalog.py`, locates it on its page
 builds the report PDF, and returns JSON (or one zip with `output=zip`). The React UI,
 served by nginx, calls the same endpoint and highlights findings in a PDF viewer.
 
-![Deployment and component model, Phase 4](docs/model.png)
+![Deployment and component model, Phase 4](model.png)
 
-![POST /process processing flow, Phase 4](docs/model1.png)
+![POST /process processing flow, Phase 4](model1.png)
 
 The Phase 3 versions of these models (validation only) are kept as `model.png` and
 `model1.png` for comparison.
