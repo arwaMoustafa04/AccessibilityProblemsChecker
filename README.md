@@ -45,9 +45,9 @@ catalog order, classifies each finding from `catalog.py`, locates it on its page
 builds the report PDF, and returns JSON (or one zip with `output=zip`). The React UI,
 served by nginx, calls the same endpoint and highlights findings in a PDF viewer.
 
-![Deployment and component model, Phase 4](model.png)
+![Deployment and component model, Phase 4](docs/architecture-phase4.png)
 
-![POST /process processing flow, Phase 4](model1.png)
+![POST /process processing flow, Phase 4](docs/process-flow-phase4.png)
 
 The Phase 3 versions of these models (validation only) are kept as `model.png` and
 `model1.png` for comparison.
@@ -103,7 +103,8 @@ upload (see [`checks/README.md`](checks/README.md)); the image and structure che
   content, nested Form XObjects, and inline images. Resolves custom roles, MCIDs,
   page/stream scopes and image object references; ignores unused resources and
   explicitly marked `/Artifact` image uses. Missing Figure alternatives are `fail`;
-  images without a resolvable alternative are `needs_review`.
+  placeholder alternatives (e.g. "image1", "photo.jpg") and images without a resolvable
+  alternative are `needs_review`.
 - **CHK-STRUCTURE (1.3.1):** checks for a nonempty structure tree, the tagged-document
   marker, malformed relationships, and tagged tables with data cells but no headers.
   Missing/empty structure is `fail`; marker, relationship and header concerns are

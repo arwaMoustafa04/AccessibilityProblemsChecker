@@ -278,3 +278,55 @@ def test_malformed_pdf_endpoint_remains_reviewable():
         "malformed_structure", "image_inspection_incomplete"}
     assert body["repairs"] == []
     assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
+
+
+# --- Generic (placeholder) Figure alternative text ---------------------------
+
+from pdf_checks import is_generic_alt  # noqa: E402
+
+
+@pytest.mark.parametrize("alt", ["image", "Image 1", "img_003", "figure-2", "photo.jpg",
+                                 "Untitled", "1234", "graphic", "logo.png", "Alt text"])
+def test_generic_alt_is_recognized(alt):
+    assert is_generic_alt(alt)
+
+
+@pytest.mark.parametrize("alt", ["A blue square", "Bar chart of weekly library visitors",
+                                 "Company logo: Purdue University", "Photo of the reading room",
+                                 "Map"])
+def test_descriptive_alt_is_not_generic(alt):
+    assert not is_generic_alt(alt)
+
+
+def _with_alt(alt: str) -> bytes:
+    pdf = pikepdf.open(io.BytesIO(make_fixture("tagged_image")))
+    figures = [o for o in pdf.objects
+               if isinstance(o, pikepdf.Dictionary) and o.get("/S") == pikepdf.Name.Figure]
+    assert figures
+    for figure in figures:
+        figure.Alt = pikepdf.String(alt)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    return buf.getvalue()
+
+
+def test_generic_figure_alt_needs_human_review():
+    data = _with_alt("image1")
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        issues = detect_pdf_issues(pdf)
+    generic = [i for i in issues if i.issue_type == "generic_figure_alt"]
+    assert len(generic) == 1 and generic[0].evaluation_result == "needs_review"
+    assert generic[0].page == 1 and '"image1"' in generic[0].description
+    assert not any(i.issue_type == "missing_figure_alt" for i in issues)
+
+    body = TestClient(app).post(
+        "/process", files={"file": ("figure.pdf", data, "application/pdf")}).json()
+    finding = next(f for f in body["findings"] if f["issue_type"] == "generic_figure_alt")
+    assert (finding["check_id"], finding["classification"], finding["status"]) == (
+        "CHK-NONTEXT", "human_review", "needs_human_review")
+    assert finding["finding_id"] in body["human_review_items"]
+
+
+def test_descriptive_figure_alt_is_not_flagged():
+    with pikepdf.open(io.BytesIO(_with_alt("A blue square on a white page"))) as pdf:
+        assert not any(i.issue_type == "generic_figure_alt" for i in detect_pdf_issues(pdf))

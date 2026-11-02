@@ -27,6 +27,8 @@ info:
     "json" (default, unchanged) or "zip", which returns one zip file with the
     uploaded PDF, the output PDF, the report PDF and result.json. Error code
     INVALID_REQUEST added (400, for an output value other than json or zip).
+    Location.bbox added (optional, nullable): [x0, y0, x1, y1] of the finding on its
+    page, so a viewer can highlight it.
 servers:
   - url: '{baseUrl}'
     description: Base URL supplied by the team under test (never hard-coded)

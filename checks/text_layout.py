@@ -18,9 +18,10 @@ class TextLine:
     bold: bool
 
 
-def lines(doc: pymupdf.Document, max_pages: int = 300) -> list[TextLine]:
+def lines(doc: pymupdf.Document) -> list[TextLine]:
+    """Every text line on every page (no page limit, like the other text checks)."""
     out = []
-    for index in range(min(len(doc), max_pages)):
+    for index in range(len(doc)):
         page = doc[index]
         for block in page.get_text("dict").get("blocks", []):
             for line in block.get("lines", []):
@@ -63,5 +64,6 @@ def probable_headings(all_lines: list[TextLine]) -> list[TextLine]:
 
 
 
-def pages_with_text(doc: pymupdf.Document, max_pages: int = 300) -> int:
-    return sum(1 for i in range(min(len(doc), max_pages)) if doc[i].get_text("text").strip())
+def pages_with_text(doc: pymupdf.Document) -> int:
+    """How many pages have extractable text (all pages are counted)."""
+    return sum(1 for i in range(len(doc)) if doc[i].get_text("text").strip())

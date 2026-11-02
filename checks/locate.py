@@ -98,7 +98,7 @@ class Locator:
             draws = _Draws()
             pdf_page = self.ctx.pdf.pages[page - 1]
             _walk(pdf_page, pdf_page.resources, pymupdf.Matrix(1, 1), f"Page[{page}]/Contents",
-                  [], draws, top_level=True, depth=0)
+                  [], draws, top_level=True, depth=0, active=frozenset())
             self._draws[page] = draws
         return self._draws[page]
 
@@ -130,9 +130,13 @@ class Locator:
 
 
 def _walk(source: Any, resources: Any, ctm: pymupdf.Matrix, path: str,
-          outer_mcids: list[int | None], draws: _Draws, top_level: bool, depth: int) -> None:
+          outer_mcids: list[int | None], draws: _Draws, top_level: bool, depth: int,
+          active: frozenset[tuple[int, int]]) -> None:
     """Follow q/Q/cm through a content stream (and the forms it draws), recording
-    where each image lands. Refs are numbered like pdf_checks.Inspector.scan."""
+    where each image lands. Refs are numbered like pdf_checks.Inspector.scan.
+    ``active`` holds the forms currently being drawn: a form that draws itself (directly
+    or through others) is skipped, as in pdf_checks, so a malformed PDF cannot make the
+    walk grow exponentially."""
     if depth > MAX_FORM_DEPTH:
         return
     saved: list[pymupdf.Matrix] = []
@@ -170,11 +174,13 @@ def _walk(source: Any, resources: Any, ctm: pymupdf.Matrix, path: str,
             if subtype == "/Image":
                 draws.add(ref, _UNIT * ctm, mcids)
             elif subtype == "/Form":
+                if obj.objgen in active:
+                    continue  # cyclic form: already being drawn
                 matrix = obj.get("/Matrix")
                 form_ctm = (pymupdf.Matrix(*(float(v) for v in matrix)) if matrix is not None
                             else pymupdf.Matrix(1, 1)) * ctm
                 _walk(obj, obj.get("/Resources", resources), form_ctm, ref, mcids, draws,
-                      top_level=False, depth=depth + 1)
+                      top_level=False, depth=depth + 1, active=active | {obj.objgen})
 
 
 def _struct_node(pdf: pikepdf.Pdf, path: str) -> Any:

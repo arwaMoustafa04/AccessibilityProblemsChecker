@@ -221,6 +221,30 @@ def test_visual_heading_without_tags_needs_review() -> None:
     assert "Campus Library Services" in found[0].description
 
 
+def test_headings_and_text_pages_have_no_page_limit() -> None:
+    """A heading that only appears after page 300 is still found (no silent page cap)."""
+    from reportlab.pdfgen import canvas
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    for n in range(305):
+        if n == 304:
+            c.setFont("Helvetica-Bold", 20)
+            c.drawString(72, 750, "Appendix Late Heading")
+        c.setFont("Helvetica", 11)
+        for line in range(6):
+            c.drawString(72, 700 - line * 14, f"Body text line {line} on page {n + 1} of the report.")
+        c.showPage()
+    c.save()
+    pdf = pikepdf.open(io.BytesIO(buf.getvalue()))
+    _set_title(pdf, "Long Report")
+    pdf.Root.ViewerPreferences = pikepdf.Dictionary(DisplayDocTitle=True)
+    data = _save(pdf)
+    found = issues_of(headings_check.check, data)
+    assert types(found) == {"headings_not_tagged"} and found[0].page == 305
+    lang_issue = issues_of(lang_check.check, data)[0]
+    assert "305 page(s) contain text" in lang_issue.description
+
+
 def test_form_field_label() -> None:
     assert types(issues_of(headings_check.check, form_pdf(None))) == {"form_field_without_label"}
     assert issues_of(headings_check.check, form_pdf("Email address")) == []

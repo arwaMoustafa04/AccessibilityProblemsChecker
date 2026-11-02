@@ -98,6 +98,29 @@ def test_unknown_or_broken_refs_give_no_box():
     assert located(data, Issue("CHK-LINK", "x", "x", page=5, object_ref="5 0 R")) is None
 
 
+def _self_drawing_form_pdf() -> bytes:
+    """A malformed PDF: form /Fm0 draws itself twice (2^depth work without a cycle guard)."""
+    pdf = pikepdf.new()
+    pdf.add_blank_page()
+    form = pdf.make_stream(b"/Fm0 Do /Fm0 Do", Type=pikepdf.Name.XObject,
+                           Subtype=pikepdf.Name.Form, BBox=[0, 0, 10, 10])
+    form.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Fm0=form))
+    page = pdf.pages[0]
+    page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Fm0=form))
+    page.Contents = pdf.make_stream(b"/Fm0 Do")
+    buf = io.BytesIO()
+    pdf.save(buf)
+    return buf.getvalue()
+
+
+def test_self_drawing_form_does_not_hang():
+    import time
+    start = time.perf_counter()
+    issue = Issue("CHK-NONTEXT", "x", "x", page=1, object_ref="Page[1]/Contents/op[0]")
+    assert located(_self_drawing_form_pdf(), issue) is None
+    assert time.perf_counter() - start < 5
+
+
 def test_check_supplied_box_is_kept():
     issue = Issue("CHK-LINK", "x", "x", page=1, bbox=[1.0, 2.0, 3.0, 4.0])
     assert located(make_fixture("untagged_image"), issue) == [1.0, 2.0, 3.0, 4.0]

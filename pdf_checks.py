@@ -5,6 +5,7 @@ that their meaning, reading order, or coverage is correct.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -24,6 +25,20 @@ class Issue:
     def key(self) -> tuple:
         # Tree/content paths remain stable when pikepdf renumbers saved objects.
         return self.check_id, self.issue_type, self.page, self.object_ref
+
+
+# Placeholder alternative text that names the object instead of describing it:
+# "image", "Image 1", "img_003", "figure-2", "photo.jpg", "untitled", "1234".
+_GENERIC_ALT = re.compile(
+    r"^(?:(?:image|img|picture|pic|photo|figure|fig|graphic|logo|icon|chart|diagram|"
+    r"untitled|alt|alt text|placeholder|description|spacer|blank|insert image here)"
+    r"[\s_.-]*\d*|[\w.-]*\.(?:png|jpe?g|gif|bmp|tiff?|svg|webp)|[\d\s_.-]+)$",
+    re.IGNORECASE)
+
+
+def is_generic_alt(text: str) -> bool:
+    """True for alternative text that is a placeholder or file name, not a description."""
+    return bool(_GENERIC_ALT.match(text.strip()))
 
 
 def _dict(obj: Any) -> bool:
@@ -137,6 +152,10 @@ class Inspector:
             if not isinstance(alt, pikepdf.String) or not str(alt).strip():
                 self.add("CHK-NONTEXT", "missing_figure_alt", path,
                          "Figure has no nonempty alternative description", page, "fail")
+            elif is_generic_alt(str(alt)):
+                self.add("CHK-NONTEXT", "generic_figure_alt", path,
+                         f'Figure alternative text "{str(alt).strip()[:60]}" looks like a '
+                         "placeholder or file name; review whether it describes the image", page)
         if role == "/Table":
             table = {"data": 0, "headers": 0}
         if table is not None:
