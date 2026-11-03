@@ -15,6 +15,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import json
+import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,10 +109,13 @@ class Context:
         return self.client.get(self.url(path), timeout=PROJECT_CALL_TIMEOUT_SECONDS)
 
     def process(self, data: bytes | None, name: str = "test.pdf",
-                content_type: str = "application/pdf") -> httpx.Response:
+                content_type: str = "application/pdf",
+                output: str | None = None) -> httpx.Response:
         files = {"file": (name, data, content_type)} if data is not None else None
-        return self.client.post(self.url("/process"), files=files,
-                                data={"session_id": self.session_id},
+        form = {"session_id": self.session_id}
+        if output is not None:
+            form["output"] = output
+        return self.client.post(self.url("/process"), files=files, data=form,
                                 timeout=PROJECT_CALL_TIMEOUT_SECONDS)
 
 
@@ -352,6 +357,169 @@ def t_fixture_issues_repaired(ctx: Context) -> str:
             "received all fixed with validation passed and a repaired PDF.")
 
 
+# --- Detection on focused PDFs (Phase 4) ----------------------------------------
+# Each PDF isolates a few issues (fixture READMEs list them). Issue types are each
+# team's own names, so tests check what the shared spec fixes: check_id,
+# classification, status, and the page in location.
+
+def tagged_problems_pdf() -> bytes:
+    """A tagged one-page PDF with known title, language, heading and label problems.
+
+    - Info /Title "Untitled" (a placeholder, CHK-TITLE)
+    - Catalog /Lang "en_US" (underscore: not a valid BCP 47 tag, CHK-LANG)
+    - Headings H2, H4, H3: first is not H1, H2 -> H4 skips a level, H3 is empty
+      (CHK-HEADINGS); a form field with no /TU label (CHK-HEADINGS, labels)
+    """
+    pdf = pikepdf.new()
+    pdf.add_blank_page(page_size=(612, 792))
+    page = pdf.pages[0]
+    font = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1, BaseFont=pikepdf.Name.Helvetica))
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font))
+    page.Contents = pdf.make_stream(
+        b"/H2 <</MCID 0>> BDC BT /F1 24 Tf 72 700 Td (Annual Report) Tj ET EMC\n"
+        b"/H4 <</MCID 1>> BDC BT /F1 14 Tf 72 660 Td (Results) Tj ET EMC\n"
+        b"/P <</MCID 2>> BDC BT /F1 11 Tf 72 640 Td (Revenue grew this year.) Tj ET EMC\n")
+    pg = page.obj
+    root = pdf.make_indirect(pikepdf.Dictionary(Type=pikepdf.Name.StructTreeRoot))
+    doc = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.StructElem, S=pikepdf.Name.Document, P=root))
+
+    def elem(tag: str, mcid: int | None) -> pikepdf.Object:
+        kids = pikepdf.Array([mcid]) if mcid is not None else pikepdf.Array()
+        return pdf.make_indirect(pikepdf.Dictionary(
+            Type=pikepdf.Name.StructElem, S=pikepdf.Name(tag), P=doc, Pg=pg, K=kids))
+
+    kids = [elem("/H2", 0), elem("/H4", 1), elem("/H3", None), elem("/P", 2)]
+    doc.K = pikepdf.Array(kids)
+    root.K = pikepdf.Array([doc])
+    root.ParentTree = pdf.make_indirect(pikepdf.Dictionary(Nums=pikepdf.Array(
+        [0, pikepdf.Array([kids[0], kids[1], kids[3]])])))
+    page.StructParents = 0
+    pdf.Root.StructTreeRoot = root
+    pdf.Root.MarkInfo = pikepdf.Dictionary(Marked=True)
+    pdf.Root.Lang = pikepdf.String("en_US")
+    pdf.docinfo["/Title"] = "Untitled"
+    field = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Annot, Subtype=pikepdf.Name.Widget, FT=pikepdf.Name.Tx,
+        T=pikepdf.String("name"), Rect=pikepdf.Array([72, 600, 272, 620]), P=pg))
+    page.Annots = pdf.make_indirect(pikepdf.Array([field]))
+    pdf.Root.AcroForm = pikepdf.Dictionary(Fields=pikepdf.Array([field]))
+    buf = io.BytesIO()
+    pdf.save(buf, deterministic_id=True)
+    return buf.getvalue()
+
+
+def expect_findings(body: dict, expected: dict[str, str], page: int | None = None) -> None:
+    """Each expected check_id has a finding with that classification and a valid status.
+
+    human_review findings must stay needs_human_review (never repaired). An
+    auto_fixable finding is "detected" until repair is on, or "fixed" once it is.
+    With `page`, at least one finding for the check must be located on that page.
+    """
+    for check_id, classification in expected.items():
+        mine = [f for f in body["findings"] if f.get("check_id") == check_id]
+        if not mine:
+            got = sorted({f.get("check_id") for f in body["findings"]})
+            raise Mismatch(f"Expected a {check_id} finding; received findings for {got}.")
+        for f in mine:
+            if f.get("classification") != classification:
+                raise Mismatch(f"Expected {check_id} classified {classification}; "
+                               f"received {f.get('classification')}.")
+            allowed = ({"needs_human_review"} if classification == "human_review"
+                       else {"detected", "fixed"})
+            if f.get("status") not in allowed:
+                raise Mismatch(f"Expected {check_id} status in {sorted(allowed)}; "
+                               f"received {f.get('status')}.")
+            if not str((f.get("location") or {}).get("description") or "").strip():
+                raise Mismatch(f"{check_id} finding {f.get('finding_id')} has no location description.")
+        if page is not None and not any((f.get("location") or {}).get("page") == page
+                                        for f in mine):
+            pages = sorted({str((f.get("location") or {}).get("page")) for f in mine})
+            raise Mismatch(f"Expected a {check_id} finding located on page {page}; "
+                           f"received pages {pages}.")
+    review_ids = {f["finding_id"] for f in body["findings"]
+                  if f.get("classification") == "human_review"}
+    if not review_ids <= set(body["human_review_items"]):
+        raise Mismatch("Every human_review finding must be listed in human_review_items; "
+                       f"missing {sorted(review_ids - set(body['human_review_items']))}.")
+
+
+def _detection_test(file_name: str, expected: dict[str, str], page: int | None,
+                    folder: str) -> Callable[[Context], str]:
+    def run(ctx: Context) -> str:
+        sent = fixture(f"{folder}/{file_name}")
+        body = expect_evaluation(ctx.process(sent, name=file_name), sent)
+        expect_findings(body, expected, page)
+        decode_pdf(body["report_pdf"], "report_pdf")
+        where = f" on page {page}" if page else ""
+        return (f"Expected {file_name} to produce {', '.join(expected)} findings{where}, "
+                "correctly classified; received that.")
+    return run
+
+
+t_figure_table = _detection_test(  # Person 1: Figure without Alt + table without TH
+    "combined.pdf", {"CHK-NONTEXT": "human_review", "CHK-STRUCTURE": "human_review"},
+    1, "pdf_checks")
+t_untagged_inline_image = _detection_test(  # inline image with no text alternative
+    "inline_image.pdf", {"CHK-NONTEXT": "human_review"}, 1, "pdf_checks")
+t_sensory_color_link = _detection_test(  # Person 2: all three review checks on page 2
+    "combined_review.pdf", {"CHK-SENSORY": "human_review", "CHK-COLOR": "human_review",
+                            "CHK-LINK": "human_review"}, 2, "person2")
+t_empty_link = _detection_test(  # a link with no label at all
+    "link_empty.pdf", {"CHK-LINK": "human_review"}, 1, "person2")
+
+
+def t_title_lang_headings(ctx: Context) -> str:
+    sent = tagged_problems_pdf()
+    body = expect_evaluation(ctx.process(sent, name="tagged_problems.pdf"), sent)
+    expect_findings(body, {"CHK-TITLE": "auto_fixable", "CHK-LANG": "auto_fixable",
+                           "CHK-HEADINGS": "human_review"})
+    return ('Expected the placeholder title "Untitled", the invalid language "en_US" and the '
+            "heading/label problems found and classified; received that.")
+
+
+def t_results_zip(ctx: Context) -> str:
+    sent = fixture("accessibilityIssues.pdf")
+    resp = ctx.process(sent, name="accessibilityIssues.pdf", output="zip")
+    expect_status(resp, 200)
+    if not resp.headers.get("content-type", "").startswith("application/zip"):
+        raise Mismatch(f"Expected Content-Type application/zip; received "
+                       f"{resp.headers.get('content-type')!r}.")
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(resp.content))
+        names = zf.namelist()
+        files = {n: zf.read(n) for n in names}
+    except zipfile.BadZipFile:
+        raise Mismatch("output=zip did not return a valid zip file.") from None
+    if files.get("original.pdf") != sent:
+        raise Mismatch(f"Expected original.pdf identical to the upload; zip has {names}.")
+    try:
+        result = json.loads(files["result.json"])
+    except (KeyError, ValueError):
+        raise Mismatch(f"Expected a readable result.json in the zip; zip has {names}.") from None
+    missing = EVALUATION_RESULT_FIELDS - set(result)
+    if missing:
+        raise Mismatch(f"result.json is missing EvaluationResult fields {sorted(missing)}.")
+    if result["input"].get("sha256") != hashlib.sha256(sent).hexdigest():
+        raise Mismatch("result.json input.sha256 does not describe the uploaded PDF.")
+    for key in ("output_pdf", "report_pdf"):
+        name = result[key].get("file_name")
+        data = files.get(name, b"")
+        if not data.startswith(b"%PDF-") or hashlib.sha256(data).hexdigest() != result[key].get("sha256"):
+            raise Mismatch(f"Expected {key} {name!r} in the zip matching its sha256; zip has {names}.")
+    if result["compliance_statement"] != COMPLIANCE_STATEMENT:
+        raise Mismatch("result.json does not carry the fixed non-certification statement.")
+    return ("Expected output=zip to return original.pdf, the output PDF, the report PDF and "
+            f"result.json; received a zip with {len(names)} matching files.")
+
+
+def t_invalid_output(ctx: Context) -> str:
+    return expect_error(ctx.process(fixture("goodAccessible.pdf"), name="goodAccessible.pdf",
+                                    output="xml"), 400, {"INVALID_REQUEST"})
+
+
+
 @dataclass(frozen=True)
 class TestCase:
     test_id: str
@@ -383,4 +551,18 @@ SUITE: list[TestCase] = [
     TestCase("T-14", t_fixture_issues_repaired,
              ("COMP-REPAIR", "COMP-REVALIDATION", "COMP-REPORT"),
              ("AC-05", "AC-06", "AC-08"), phase=5),
+    # Detection on focused PDFs (tester/fixtures/pdf_checks, tester/fixtures/person2, generated)
+    TestCase("T-15", t_figure_table, ("COMP-DETECTION", "COMP-CLASSIFICATION", "COMP-REPORT"),
+             ("AC-03", "AC-04", "AC-07"), phase=4),
+    TestCase("T-16", t_untagged_inline_image, ("COMP-DETECTION", "COMP-CLASSIFICATION"),
+             ("AC-03", "AC-04", "AC-07"), phase=4),
+    TestCase("T-17", t_sensory_color_link, ("COMP-DETECTION", "COMP-CLASSIFICATION", "COMP-REPORT"),
+             ("AC-03", "AC-04", "AC-07"), phase=4),
+    TestCase("T-18", t_empty_link, ("COMP-DETECTION", "COMP-CLASSIFICATION"),
+             ("AC-03", "AC-04", "AC-07"), phase=4),
+    TestCase("T-19", t_title_lang_headings, ("COMP-DETECTION", "COMP-CLASSIFICATION"),
+             ("AC-03", "AC-04", "AC-07"), phase=4),
+    # Results zip (spec v0.4.0 output=zip) and its input check
+    TestCase("T-20", t_results_zip, ("COMP-REPORT",), ("AC-01", "AC-09"), phase=4),
+    TestCase("T-21", t_invalid_output, ("COMP-VALIDATION",), ("AC-02",), phase=4),
 ]

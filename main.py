@@ -37,6 +37,8 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("pdf-system")
 
+store.warm_up()  # measures module-load lines for /test/report in the background
+
 app = FastAPI(
     title="Pod PDF Accessibility Evaluation and Remediation API",
     version=SPEC_VERSION,
@@ -177,13 +179,17 @@ def process_pdf(
 
     Set output=zip to download everything as one zip file instead of JSON.
     """
+    with store.measure(session_id):  # the whole request counts toward the session
+        return _process(file, session_id, output)
+
+
+def _process(file: UploadFile | None, session_id: str | None, output: str):
     if file is None:
         log.info("process rejected error_code=MISSING_FILE")
         return _error(400, "MISSING_FILE", "Request must include a PDF in the 'file' field.")
     data = file.file.read(MAX_FILE_SIZE_BYTES + 1)
     try:
-        with store.measure(session_id):
-            result = run_pipeline(data, file.filename or "upload.pdf")
+        result = run_pipeline(data, file.filename or "upload.pdf")
     except PipelineError as err:
         log.info("process rejected error_code=%s size_bytes=%d session=%s",
                  err.error_code, len(data), session_id or "-")

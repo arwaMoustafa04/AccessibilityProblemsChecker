@@ -106,8 +106,8 @@ server {
     server_name _;
 
     client_max_body_size 100m;    # larger than 20 MB, so the app (not nginx) returns the JSON 413
-    proxy_read_timeout 900s;      # a full tester run can take minutes
-    proxy_send_timeout 900s;
+    proxy_read_timeout 1500s;     # worst-case tester run: 21 calls x 60 s + report
+    proxy_send_timeout 1500s;
 
     location /system/ {
         proxy_pass http://127.0.0.1:8001/;

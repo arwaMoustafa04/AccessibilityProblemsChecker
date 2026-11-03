@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import uuid
+from pathlib import Path
 
 import pikepdf
 import pytest
@@ -357,16 +358,37 @@ def test_setup_then_report_coverage(post_pdf) -> None:
 
     before = client.get("/test/report", params={"session_id": sid}).json()
     assert before["session_id"] == sid
-    assert before["coverage"]["code"]["covered"] == 0
+    loaded = before["coverage"]["code"]["covered"]  # lines run when the modules load
+    assert 0 < loaded < before["coverage"]["code"]["total"]
 
     assert post_pdf(make_pdf(), session_id=sid).status_code == 200
     after = client.get("/test/report", params={"session_id": sid}).json()["coverage"]["code"]
-    assert 0 < after["covered"] <= after["total"]
+    assert loaded < after["covered"] <= after["total"]
     assert after["basis"]
 
     # Reading the report does not change it.
     again = client.get("/test/report", params={"session_id": sid}).json()["coverage"]["code"]
     assert again == after
+
+
+def test_coverage_counts_service_code_only() -> None:
+    import sessions
+    names = {Path(f).name for f in sessions.MEASURED_FILES}
+    assert {"main.py", "pipeline.py", "models.py", "pdf_checks.py", "title.py"} <= names
+    assert "contract_report.py" not in names  # a command-line script, not the service
+    assert not any(n.startswith("test_") for n in names)
+    load = sessions.store._module_load_lines()
+    main_py = str(Path(sessions.__file__).with_name("main.py"))
+    assert load.get(main_py)  # imports and route definitions in main.py ran on load
+
+
+def test_missing_file_counts_toward_session_coverage() -> None:
+    sid = str(uuid.uuid4())
+    assert client.post("/test/setup", json={"session_id": sid}).status_code == 201
+    before = client.get("/test/report", params={"session_id": sid}).json()["coverage"]["code"]
+    assert client.post("/process", data={"session_id": sid}).status_code == 400
+    after = client.get("/test/report", params={"session_id": sid}).json()["coverage"]["code"]
+    assert after["covered"] > before["covered"]
 
 
 def test_setup_duplicate_session_is_409() -> None:
@@ -403,3 +425,9 @@ def test_test_endpoint_errors_keep_their_format_behind_a_prefix() -> None:
 
 def test_report_without_session_id_is_400() -> None:
     assert client.get("/test/report").status_code == 400
+
+
+def test_load_probe_never_starts_another_probe(monkeypatch) -> None:
+    import sessions
+    monkeypatch.setenv("PDF_SYSTEM_LOAD_PROBE", "1")
+    assert sessions.SessionStore._measure_module_load() == {}

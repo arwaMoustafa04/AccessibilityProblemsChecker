@@ -32,8 +32,8 @@ Elastic IP) behind nginx, with veraPDF (Java) on the same instance; see
 
 **Access / run notes (as in the registry):** no authentication. Base URLs have no
 trailing slash. Maximum times: system `/test/setup` 10 s; tester `/test/setup` 15 s;
-tester `/test/run` at most 14 project calls × 60 s plus 10 s for the target's
-`/test/report` (≈ 15 min worst case); a normal run against our system takes a few seconds.
+tester `/test/run` at most 21 project calls × 60 s plus 10 s for the target's
+`/test/report` (≈ 21 min worst case); a normal run against our system takes under a minute.
 
 ## Architecture
 
@@ -126,10 +126,10 @@ error source; code, component and system coverage).
 | Endpoint | What it does |
 |---|---|
 | `POST /test/setup` | `{"target_url": "<system base URL>"}` → creates a session, calls the target's `/test/setup`, returns 201 `{"session_id"}` |
-| `POST /test/run` | `{"session_id"}` → runs T-01 to T-14 once, reads the target's `/test/report`, returns the full report |
+| `POST /test/run` | `{"session_id"}` → runs T-01 to T-21 once, reads the target's `/test/report`, returns the full report |
 | `GET /test/report?session_id=...` | Returns the stored report (409 until the run ends) |
 
-The 14 tests (`tester/suite.py`):
+The 21 tests (`tester/suite.py`):
 
 | Test | Checks | Acceptance criteria |
 |---|---|---|
@@ -147,10 +147,24 @@ The 14 tests (`tester/suite.py`):
 | T-12 | Exactly 20 MB → accepted | AC-10 |
 | T-13 | `accessibilityIssues.pdf`: built-in issues found and classified (**Phase 4**) | AC-03, AC-04, AC-07 |
 | T-14 | `accessibilityIssues.pdf`: title and language fixed and re-validated (**Phase 5**) | AC-05, AC-06, AC-08 |
+| T-15 | `pdf_checks/combined.pdf`: figure without alt text and table without headers found on page 1, human_review | AC-03, AC-04, AC-07 |
+| T-16 | `pdf_checks/inline_image.pdf`: inline image without a text alternative found | AC-03, AC-04, AC-07 |
+| T-17 | `person2/combined_review.pdf`: sensory, color and link findings on page 2, human_review | AC-03, AC-04, AC-07 |
+| T-18 | `person2/link_empty.pdf`: link with no label found | AC-03, AC-04, AC-07 |
+| T-19 | Generated tagged PDF: placeholder title, invalid language (auto_fixable), heading and form-label problems (human_review) | AC-03, AC-04, AC-07 |
+| T-20 | `output=zip`: original, output PDF, report PDF and `result.json`, all matching | AC-01, AC-09 |
+| T-21 | `output=xml` → 400 `INVALID_REQUEST` | AC-02 |
 
 Named files are the team's shared test set in `tester/fixtures/` (its README gives each
 file's expected result); the no-file, corrupted and exact-size cases are generated in code.
 Tests for later phases report `skip` until `CURRENT_PHASE` in `tester/suite.py` reaches them.
+
+**Code coverage** (reported by the system's `/test/report`) counts coverage.py
+statements of the service's modules (`main.py`, `pipeline.py`, `models.py`,
+`catalog.py`, `sessions.py`, `pdf_checks.py`, `checks/*.py`) that ran for the session:
+lines run while handling its `/process` requests, plus lines that run when those modules
+load (imports, definitions, models), measured once at startup in a clean interpreter.
+`contract_report.py` is a standalone script, not part of the service, so it is not counted.
 
 **Phase 4 result against our deployed system (Oct 31, 2026):** 13 pass, 0 fail, 1 skip
 (T-14, repair, Phase 5); component coverage 6/8, system (acceptance-criteria) coverage
@@ -253,7 +267,7 @@ nginx, Java and veraPDF (`/opt/verapdf`), creates the venv, builds the React UI 
 `/var/www/pdf-ui`, and sets up two systemd services (`pdf-system` on port 8001,
 `pdf-tester` on 8002) that restart automatically. nginx maps `/system/` and `/tester/`
 to them, serves the UI at `/system/ui/` (the bare `/system` redirects there) and at `/`,
-with `client_max_body_size 100m` and a 900 s read timeout. The veraPDF and UI steps are
+with `client_max_body_size 100m` and a 1500 s read timeout. The veraPDF and UI steps are
 optional (`SKIP_VERAPDF=1`, `SKIP_UI=1`); if one fails, the API and tester still deploy.
 Logs: `sudo journalctl -u pdf-system -u pdf-tester`.
 

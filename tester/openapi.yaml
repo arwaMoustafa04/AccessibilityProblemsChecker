@@ -1,10 +1,10 @@
 openapi: 3.1.1
 info:
   title: Team 1 Tester Interface
-  version: 0.3.0
+  version: 0.4.0
   description: |
-    Team 1's tester for the PDF accessibility pod (shared spec v0.3.0).
-    It runs 11 planned tests (T-01 to T-11) against a target system's project API
+    Team 1's tester for the PDF accessibility pod (shared spec v0.4.0).
+    It runs 21 planned tests (T-01 to T-21) against a target system's project API
     (GET /health, GET /checks, POST /process), reads the target's /test/report for
     code coverage, and returns one suite report.
     Sessions and reports are kept in memory until the tester instance stops.
@@ -57,7 +57,7 @@ paths:
     post:
       summary: Run the tester sequence and return the complete report
       description: >
-        Runs T-01 to T-11 once, in order, then reads the system's /test/report.
+        Runs T-01 to T-21 once, in order (tests for a later phase report skip), then reads the system's /test/report.
         One run per session; later or concurrent runs return 409. Each project call
         has a 60-second limit and is not retried.
       requestBody:

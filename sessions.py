@@ -7,6 +7,10 @@ requests. Sessions live in memory and are cleared when the service restarts.
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -21,12 +25,32 @@ except ImportError:  # coverage is optional; report null counts without it
     _coverage = None
 
 SOURCE_DIR = Path(__file__).resolve().parent
+# Command-line tools kept in the repository that the running service never imports.
+NOT_SERVICE_CODE = {"contract_report.py"}
 MEASURED_FILES = sorted(  # this service's modules, including the checks/ package
     str(p) for p in [*SOURCE_DIR.glob("*.py"), *SOURCE_DIR.glob("checks/*.py")]
     if not p.name.startswith("test_") and p.name != "conftest.py"
+    and p.name not in NOT_SERVICE_CODE
 )
-BASIS = ("Source lines of this service's Python modules executed while handling "
-         "this session's POST /process requests since setup (coverage.py)")
+BASIS = ("Statements (coverage.py) of this service's Python modules, main.py, pipeline.py, "
+         "models.py, catalog.py, sessions.py, pdf_checks.py and checks/*.py, executed for "
+         "this session: the lines run while handling its POST /process requests since "
+         "setup, plus the lines that run when those modules load (imports, definitions, "
+         "models), measured once in a clean interpreter. contract_report.py is a "
+         "standalone command-line script, not part of the service, and is not counted")
+LOAD_TIMEOUT_SECONDS = 30
+_PROBE_ENV = "PDF_SYSTEM_LOAD_PROBE"  # set inside the probe so it never starts another
+# Imports the service in a fresh interpreter and prints the lines run while loading.
+_LOAD_SCRIPT = """
+import json, sys, coverage
+files = json.loads(sys.argv[1])
+cov = coverage.Coverage(data_file=None, include=files, config_file=False)
+cov.start()
+import main  # noqa: F401  (loads every service module the app uses)
+cov.stop()
+data = cov.get_data()
+print(json.dumps({f: sorted(data.lines(f) or []) for f in data.measured_files()}))
+"""
 UNAVAILABLE_BASIS = "Source lines; target instrumentation unavailable (coverage.py not installed)"
 
 
@@ -44,6 +68,8 @@ class SessionStore:
         self._measure_lock = threading.Lock()
         self._sessions: dict[str, dict[str, set[int]]] = {}
         self._statements: dict[str, set[int]] | None = None
+        self._load_lines: dict[str, set[int]] | None = None
+        self._load_lock = threading.Lock()
 
     def create(self, session_id: str) -> None:
         with self._lock:
@@ -87,6 +113,8 @@ class SessionStore:
         if _coverage is None:
             return {"covered": None, "total": None, "basis": UNAVAILABLE_BASIS}
         statements = self._statements or self._compute_statements()
+        for f, lines in self._module_load_lines().items():
+            executed.setdefault(f, set()).update(lines)
         total = sum(len(s) for s in statements.values())
         covered = sum(len(executed.get(f, set()) & s) for f, s in statements.items())
         return {"covered": covered, "total": total, "basis": BASIS}
@@ -102,5 +130,36 @@ class SessionStore:
         self._statements = {f: set(cov.analysis2(f)[1]) for f in MEASURED_FILES}
         return self._statements
 
+    def _module_load_lines(self) -> dict[str, set[int]]:
+        """Lines that run when the service's modules are imported, measured once.
+
+        These lines (imports, def/class statements, model definitions) run once when
+        the service starts, before any session exists, so a per-request measurement
+        never sees them. A clean interpreter imports the app under coverage.py to
+        find them. If that fails, nothing is added (the older, lower count).
+        """
+        with self._load_lock:
+            if self._load_lines is None:
+                self._load_lines = self._measure_module_load()
+            return self._load_lines
+
+    def warm_up(self) -> None:
+        """Measure the module-load lines in the background, so the first report is fast."""
+        if _coverage is not None and not os.environ.get(_PROBE_ENV):
+            threading.Thread(target=self._module_load_lines, daemon=True).start()
+
+    @staticmethod
+    def _measure_module_load() -> dict[str, set[int]]:
+        if os.environ.get(_PROBE_ENV):
+            return {}
+        try:
+            out = subprocess.run(
+                [sys.executable, "-c", _LOAD_SCRIPT, json.dumps(MEASURED_FILES)],
+                cwd=SOURCE_DIR, capture_output=True, text=True, check=True,
+                timeout=LOAD_TIMEOUT_SECONDS, env={**os.environ, _PROBE_ENV: "1"})
+            raw = json.loads(out.stdout.strip().splitlines()[-1])
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            return {}
+        return {f: set(v) for f, v in raw.items() if f in MEASURED_FILES}
 
 store = SessionStore()

@@ -23,6 +23,24 @@ oracle) is fixed here and checked by the tester (`tester/suite.py`).
 | "Click here" link | 2.4.4 | CHK-LINK | human_review | T-13 (Phase 4) |
 | Low-contrast text (~1.6:1) | 1.4.3 | — not one of the 8 agreed checks | not evaluated | — |
 
+Focused detection PDFs (Phase 4). Issue type names differ between teams, so these
+tests check the check_id, classification (human_review findings stay
+`needs_human_review`; auto_fixable ones are `detected` or `fixed`), a location
+description, the page, and that human-review findings are in `human_review_items`:
+
+| File | Built-in issues | Expected findings | Test |
+|---|---|---|---|
+| `pdf_checks/combined.pdf` | Figure without Alt; table without TH cells | CHK-NONTEXT and CHK-STRUCTURE on page 1, human_review | T-15 |
+| `pdf_checks/inline_image.pdf` | Inline image with no text alternative | CHK-NONTEXT on page 1, human_review | T-16 |
+| `person2/combined_review.pdf` | Sensory instruction, color-only cue, generic link (page 2) | CHK-SENSORY, CHK-COLOR, CHK-LINK on page 2, human_review | T-17 |
+| `person2/link_empty.pdf` | Link with no label | CHK-LINK on page 1, human_review | T-18 |
+| generated in `suite.py` (`tagged_problems_pdf`) | Title "Untitled"; `/Lang` "en_US"; headings H2, H4, empty H3; form field without /TU | CHK-TITLE and CHK-LANG auto_fixable; CHK-HEADINGS human_review | T-19 |
+| `accessibilityIssues.pdf` with `output=zip` | — | 200 zip: `original.pdf` identical to the upload, output PDF, report PDF, `result.json` matching | T-20 |
+| `goodAccessible.pdf` with `output=xml` | — | 400 `INVALID_REQUEST` | T-21 |
+
+`person2/` holds copies of Person 2's fixtures from `test_fixtures/person2/`
+(see that folder's README for how they were made); `pdf_checks/` is Person 1's set.
+
 Generated in code instead of stored as files: no file at all (T-07), a corrupted PDF
 (T-08), and the 20 MB boundary at exactly 20,971,521 bytes (T-11, rejected) and
 20,971,520 bytes (T-12, accepted).
