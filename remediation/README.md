@@ -46,23 +46,25 @@ Rules:
 - Never rewrite visible page text (CHK-COLOR / CHK-SENSORY are suggestions only:
   set `Issue.suggested_text` and `suggestion_source` in the check instead).
 
-## The AI hook (Person 4: llm.py)
+## Getting AI text (remediation/ai.py)
 
-Every LLM call goes through `remediation/ai.py`, which imports a top-level `llm.py`
-module if it exists. `llm.py` should provide, for now:
+Call these from your repair or check; each returns cleaned text, or None (then use
+your rule-based text). They never raise.
 
-```python
-def suggest_title(page_text: str, file_name: str) -> str | None:
-    """A short descriptive title for a document whose first page reads `page_text`."""
-```
+| Function | For | Returns |
+|---|---|---|
+| `ai.suggest_title(page_text, file_name)` | CHK-TITLE | a title (used by title.py) |
+| `ai.describe_image(image_bytes, nearby_text, mime_type)` | CHK-NONTEXT | alt text, or `ai.DECORATIVE` (then mark the image as an artifact instead) |
+| `ai.suggest_link_text(sentence, url)` | CHK-LINK | 2-8 words of link text |
+| `ai.rewrite_sentence(sentence, "color" or "sensory")` | CHK-COLOR, CHK-SENSORY | a rewritten sentence (suggestion only: put it in `Issue.suggested_text` with `suggestion_source="llm"`) |
 
-Each function returns plain text, or None. It may raise; `ai.py` catches every
-exception, logs it, and the caller uses its rule-based fallback, so an LLM problem never
-fails a request. `ai.py` also cleans the answer (one line, no quotes or "Title:" prefix,
-3-120 characters). Add new functions to `llm.py` (e.g. `describe_image`,
-`suggest_link_text`) and a matching wrapper in `ai.py` the same way.
+`describe_image` accepts PNG, JPEG, WebP and GIF up to 4 MB; convert other images
+(e.g. with PyMuPDF: `pymupdf.Pixmap(doc, xref).tobytes("png")`) first.
 
-- Until `llm.py` exists, or with `LLM_ENABLED=false`, every AI call returns None and
-  the rule-based fallbacks are used, so tests and CI never need an LLM.
-- Batching (one call per PDF), caching by file hash, retries, timeouts and rate limits
-  belong inside `llm.py`; LLM time counts toward the 60 s per-request limit.
+- Behind these is `llm.py` (settings at its top): no `LLM_API_KEY` means every call
+  returns None, so tests and CI never need an LLM. `LLM_MOCK=true` gives fixed fake
+  answers for trying your code without a key.
+- Each uploaded PDF gets at most 8 model calls and 25 s of model time; after that the
+  functions return None. Ask for the most important items first (e.g. the first images).
+- For tests, put a fake module in `sys.modules["llm"]` (see `test_remediation.py`) or
+  fake the HTTP call (see `test_llm.py`).

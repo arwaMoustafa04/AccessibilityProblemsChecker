@@ -5,6 +5,7 @@ import { formatBytes } from '../format.js'
 import { openPdf } from '../pdf.js'
 import FindingCard from './FindingCard.jsx'
 import PdfViewer from './PdfViewer.jsx'
+import RepairsSection from './RepairsSection.jsx'
 
 // Displays the POST /process response as-is; it does not judge accessibility itself.
 // `file` is the uploaded PDF, shown in the side panel when a finding is selected.
@@ -44,6 +45,8 @@ export default function ResultsScreen({ result, file, onRestart }) {
   for (const f of findings) findingCounts[f.check_id] = (findingCounts[f.check_id] ?? 0) + 1
   const autoFixable = findings.filter((f) => f.classification === 'auto_fixable').length
   const humanReview = findings.filter((f) => f.classification === 'human_review').length
+  const repairs = result.repairs ?? []
+  const repairByFinding = Object.fromEntries(repairs.map((r) => [r.finding_id, r]))
 
   return (
     <div className="results">
@@ -57,7 +60,9 @@ export default function ResultsScreen({ result, file, onRestart }) {
         <dl className="stats">
           <Stat label="Checks performed" value={`${checks_performed.length} / ${CHECKS.length}`} />
           <Stat label="Total findings" value={summary.total_issues} />
-          <Stat label="Auto-fixable" value={autoFixable} tone="fixable" />
+          {repairs.length > 0
+            ? <Stat label="Fixed automatically" value={summary.fixed_count} tone="fixable" />
+            : <Stat label="Auto-fixable" value={autoFixable} tone="fixable" />}
           <Stat label="Human review" value={humanReview} tone="review" />
         </dl>
 
@@ -68,6 +73,8 @@ export default function ResultsScreen({ result, file, onRestart }) {
           </div>
         )}
       </section>
+
+      <RepairsSection result={result} />
 
       <section className="card" aria-labelledby="findings-title">
         <h2 id="findings-title">Findings</h2>
@@ -84,6 +91,7 @@ export default function ResultsScreen({ result, file, onRestart }) {
               <FindingCard
                 key={f.finding_id}
                 finding={f}
+                repair={repairByFinding[f.finding_id]}
                 selected={f.finding_id === selectedId}
                 onSelect={() => setSelectedId(f.finding_id)}
               />

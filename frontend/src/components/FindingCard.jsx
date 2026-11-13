@@ -4,7 +4,7 @@ import {
 } from '../format.js'
 
 // Clicking anywhere on the card (or its "Show in PDF" button) selects it for the viewer.
-export default function FindingCard({ finding, selected, onSelect }) {
+export default function FindingCard({ finding, repair, selected, onSelect }) {
   const check = CHECKS_BY_ID[finding.check_id]
   const humanReview = finding.classification === 'human_review'
   const { page, object_ref, description } = finding.location
@@ -55,7 +55,35 @@ export default function FindingCard({ finding, selected, onSelect }) {
         {suggestion && (
           <div className="full"><dt>Suggested fix</dt><dd>{suggestion}</dd></div>
         )}
+        {finding.suggested_text && (
+          <div className="full">
+            <dt>Suggested text</dt>
+            <dd>
+              <q>{finding.suggested_text}</q>
+              {finding.suggestion_source === 'llm' && <AiBadge />}
+            </dd>
+          </div>
+        )}
+        {repair && (
+          <div className="full">
+            <dt>Automatic repair</dt>
+            <dd>
+              {repair.action}{' '}
+              <span className={`validation validation-${repair.validation_result}`}>
+                Re-check {repair.validation_result}
+              </span>
+              {repair.method === 'llm' && <AiBadge />}
+              {humanReview && (
+                <span className="muted repair-note"> A person still needs to verify this.</span>
+              )}
+            </dd>
+          </div>
+        )}
       </dl>
     </article>
   )
+}
+
+export function AiBadge() {
+  return <span className="ai-badge">AI-generated, please verify</span>
 }

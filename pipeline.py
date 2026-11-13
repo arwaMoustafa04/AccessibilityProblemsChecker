@@ -20,6 +20,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import uuid
@@ -42,8 +43,9 @@ from models import (
     OutputFile,
     Repair,
 )
-from remediation import RepairAction, RepairContext, apply_repairs, can_repair
+from remediation import RepairAction, RepairContext, ai, apply_repairs, can_repair
 
+log = logging.getLogger("pdf_accessibility.pipeline")
 MAX_FILE_SIZE_BYTES = 20_971_520
 COMPLIANCE_STATEMENT = "This report does not certify ADA Title II or WCAG 2.1 conformance."
 
@@ -136,10 +138,21 @@ def repair(pdf: pikepdf.Pdf, issues: list[Issue], ctx: CheckContext,
     Returns Issue.key -> what was done, and the RepairContext (notes for limitations).
     """
     rctx = RepairContext(pdf=pdf, check=ctx, file_name=file_name)
-    with warnings.catch_warnings():
+    with warnings.catch_warnings(), ai.request_budget():  # LLM time/calls for this PDF
         warnings.simplefilter("ignore")  # pikepdf XMP sync warnings on odd metadata
         actions = apply_repairs([i for i in issues if can_repair(i)], rctx)
     return actions, rctx
+
+
+def new_verapdf_failures(before: CheckContext, after: CheckContext) -> list[str]:
+    """PDF/UA-1 rules veraPDF fails after repair but not before (if it ran both times)."""
+    if "verapdf" not in before.__dict__ or "verapdf" not in after.__dict__:
+        return []  # a check did not ask veraPDF, so there is nothing to compare
+    old, new = before.verapdf, after.verapdf
+    if not (old.available and new.available):
+        return []
+    known = {f.rule_id for f in old.failures}
+    return sorted({f.rule_id for f in new.failures} - known)
 
 
 # --- REPORTED ----------------------------------------------------------------
@@ -175,8 +188,25 @@ def build_report_pdf(result: dict) -> bytes:
         Spacer(1, 8),
         p("Checks performed", "Heading2"),
         p(", ".join(result["checks_performed"]) or "None."),
-        p("Findings", "Heading2"),
     ]
+    findings = result["findings"]
+    if findings:
+        fixed = sum(f["status"] == "fixed" for f in findings)
+        failed = sum(f["status"] == "repair_failed" for f in findings)
+        review = sum(f["status"] == "needs_human_review" for f in findings)
+        detected = sum(f["status"] == "detected" for f in findings)
+        ai_repairs = sum(r.get("method") == "llm" for r in result["repairs"])
+        story += [
+            p("Before and after repair", "Heading2"),
+            p(f"Before repair: {len(findings)} issue(s) found."),
+            p(f"After repair: {fixed} fixed and re-validated, {failed} repair(s) failed, "
+              f"{detected} auto-fixable issue(s) not repaired, {review} need human review."),
+            p(f"New issues after repair: {len(result['new_issues_after_repair'])}. "
+              f"Repairs using AI-generated text: {ai_repairs}."),
+            p("Output PDF: " + ("the repaired copy." if result["repairs"]
+                                else "the original, unchanged.")),
+        ]
+    story.append(p("Findings", "Heading2"))
     if result["findings"]:
         for f in result["findings"]:
             story.append(p(f"{f['finding_id']} - {f['check_id']} (WCAG {f['wcag_criterion']}): "
@@ -201,6 +231,11 @@ def build_report_pdf(result: dict) -> bytes:
                            f"Re-validation: {r['validation_result']}.{ai_label}"))
     else:
         story.append(p("No repairs were applied."))
+    if result["new_issues_after_repair"]:
+        story.append(p("New issues after repair", "Heading2"))
+        for f in result["new_issues_after_repair"]:
+            story.append(p(f"{f['finding_id']} - {f['check_id']}: {f['location']['description']}. "
+                           f"{f.get('fix_description') or ''}"))
     story.append(p("Needs human review", "Heading2"))
     story.append(p(", ".join(result["human_review_items"]) or "None."))
     story.append(p("Limitations", "Heading2"))
@@ -361,13 +396,27 @@ def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: C
     actions, rctx = repair(pdf, run.issues, ctx, file_name)
     if not actions:
         return data, actions, run.issues, rctx.notes, {}
-    out = io.BytesIO()
-    pdf.save(out)
-    repaired_bytes = out.getvalue()
-    with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
-        after, after_ctx = evaluate(repaired_bytes, file_name, repaired)
-        after_ctx.close()
-        mapping = object_number_map(pdf, repaired)
+    # The repaired PDF must save, reopen and pass through every check again. If any of
+    # that fails, the repairs are discarded and the original PDF is returned.
+    try:
+        out = io.BytesIO()
+        pdf.save(out)
+        repaired_bytes = out.getvalue()
+        with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
+            after, after_ctx = evaluate(repaired_bytes, file_name, repaired)
+            try:
+                new_rules = new_verapdf_failures(ctx, after_ctx)
+                mapping = object_number_map(pdf, repaired)
+            finally:
+                after_ctx.close()
+    except Exception as exc:
+        log.exception("repaired PDF failed re-validation; returning the original")
+        return data, {}, run.issues, rctx.notes + [
+            f"Automatic repairs were discarded: the repaired PDF could not be re-validated "
+            f"({type(exc).__name__}), so the original PDF is returned unchanged."], {}
+    if new_rules:
+        rctx.note("veraPDF reports PDF/UA-1 rules failing after repair that did not fail "
+                  f"before: {', '.join(new_rules)}. Review the repaired PDF.")
     return repaired_bytes, actions, after.issues, rctx.notes, mapping
 
 

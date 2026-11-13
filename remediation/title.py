@@ -108,8 +108,9 @@ def choose_title(rctx: RepairContext) -> ChosenTitle:
     if suggestion:
         chosen = ChosenTitle(suggestion, "AI suggestion from the text of page 1", "llm")
         rctx.note("CHK-TITLE: the new title was suggested by an AI model from the text of "
-                  "page 1 (AI-generated, please verify). That text was sent to an external "
-                  "language model provider.")
+                  "page 1 (AI-generated, please verify)."
+                  + (" That text was sent to an external language model provider."
+                     if ai.sends_data() else " (LLM mock mode: nothing was sent.)"))
     else:
         if ai.available():
             rctx.note("CHK-TITLE: the AI title suggestion was not available, so a rule-based "

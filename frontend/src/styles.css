@@ -206,3 +206,16 @@ body.viewer-open .page { max-width: calc(880px + var(--viewer-width) + 1rem); pa
   .two-col, .finding-fields { grid-template-columns: 1fr; }
   .finding-header { flex-direction: column; gap: 0.4rem; }
 }
+
+/* Automatic repairs (Phase 5) */
+.before-after { list-style: none; padding: 0; margin: 0 0 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.before-after li { border: 1px solid var(--border); border-radius: 999px; padding: 0.3rem 0.8rem; font-size: 0.9rem; }
+.before-after .ba-fixed { background: var(--fixable-bg); border-color: transparent; color: var(--fixable); }
+.before-after .ba-failed { background: var(--error-bg); border-color: transparent; color: var(--error); }
+.before-after .ba-review { background: var(--review-bg); border-color: transparent; color: var(--review); }
+.repair-list { margin: 0.5rem 0 0; padding-left: 1.2rem; display: flex; flex-direction: column; gap: 0.45rem; }
+.validation { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap; }
+.validation-passed { background: var(--fixable-bg); color: var(--fixable); }
+.validation-failed { background: var(--error-bg); color: var(--error); }
+.ai-badge { display: inline-block; margin-left: 0.4rem; font-size: 0.75rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; background: var(--review-bg); color: var(--review); white-space: nowrap; }
+.repair-note { font-size: 0.875rem; }

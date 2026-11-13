@@ -67,6 +67,27 @@ if [ -x "$VERAPDF_DIR/verapdf" ]; then
     VERAPDF_ENV="Environment=VERAPDF_PATH=$VERAPDF_DIR/verapdf"
 fi
 
+# LLM settings (Phase 5). The API key lives only in this root-only file on the server,
+# never in the repository. Created once with everything commented out (no key = the
+# service uses its rule-based fallbacks); edit it, then: sudo systemctl restart pdf-system
+LLM_ENV_FILE=/etc/pdf-system.env
+if [ ! -f "$LLM_ENV_FILE" ]; then
+    echo "==> Creating $LLM_ENV_FILE (add LLM_API_KEY there to enable AI suggestions)"
+    sudo tee "$LLM_ENV_FILE" > /dev/null <<'ENVEOF'
+# AI suggestions for the PDF accessibility system (see llm.py for every option).
+# LLM_API_KEY=sk-or-...
+# LLM_MODEL_TEXT=google/gemma-4-26b-a4b:free
+# LLM_MODEL_VISION=google/gemma-4-26b-a4b:free
+# LLM_FALLBACK_MODELS=nvidia/nemotron-3.5-super-vl:free
+# LLM_DATA_COLLECTION=deny
+# LLM_MAX_PER_DAY=50
+# LLM_ENABLED=true
+ENVEOF
+    sudo chmod 600 "$LLM_ENV_FILE"
+fi
+sudo mkdir -p /var/cache/pdf-system
+sudo chown "$APP_USER" /var/cache/pdf-system
+
 echo "==> Creating services"
 sudo tee /etc/systemd/system/pdf-system.service > /dev/null <<EOF
 [Unit]
@@ -77,6 +98,8 @@ After=network.target
 User=$APP_USER
 WorkingDirectory=$APP_DIR
 $VERAPDF_ENV
+EnvironmentFile=-$LLM_ENV_FILE
+Environment=LLM_CACHE_DIR=/var/cache/pdf-system
 ExecStart=$VENV/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --root-path /system --no-access-log
 Restart=always
 

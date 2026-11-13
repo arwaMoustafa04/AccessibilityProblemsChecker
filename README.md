@@ -152,8 +152,40 @@ before/after findings are matched by walking both files side by side
 - Adding a repair, and the `llm.py` functions the AI hook expects:
   [`remediation/README.md`](remediation/README.md).
 
+- **Safety checks:** if the repaired PDF cannot be saved, reopened or re-checked, all
+  repairs are discarded and the original is returned (noted in `limitations`). When
+  veraPDF ran, PDF/UA-1 rules that fail only after repair are listed in `limitations`.
+- The report PDF and the web UI show a before/after summary, every repair with its
+  re-check result, AI labels, and any new issues after repair.
+
+### AI suggestions (`llm.py`)
+
+Every LLM call goes through `llm.py` (via `remediation/ai.py`), using an
+OpenAI-compatible API: by default OpenRouter's free `google/gemma-4-26b-a4b:free`,
+falling back to `nvidia/nemotron-3.5-super-vl:free`. Functions: `suggest_title`
+(used now), `describe_image`, `suggest_link_text` and `rewrite_sentence` (ready for
+the CHK-NONTEXT, CHK-LINK, CHK-COLOR and CHK-SENSORY repairs and suggestions).
+
+- **No key, no AI:** without `LLM_API_KEY` every call returns nothing and the
+  rule-based fallbacks are used, so CI and the tests never need an LLM. `LLM_MOCK=true`
+  gives fixed fake answers without a network (demos, UI work).
+- **Limits:** 20 calls/minute and 50/day (OpenRouter free tier), at most 8 calls and
+  25 s of model time per uploaded PDF, a 15 s timeout per call, one retry, then the
+  fallback model, then the rule-based text. Over a limit, calls are skipped, not queued.
+- **Cache:** answers are cached by a SHA-256 of the task and its inputs, in memory and
+  in `LLM_CACHE_DIR` (`/var/cache/pdf-system` on EC2), so repeated tester runs cost
+  no requests.
+- **Privacy:** on OpenRouter, requests ask for providers that do not collect data
+  (`provider.data_collection: "deny"`, `LLM_DATA_COLLECTION`). If no free provider
+  qualifies, calls fail and the fallbacks are used; setting `allow` sends document
+  text to providers that may keep it. Document text is sent as content, never as
+  instructions, and every answer is cleaned and length-limited before use.
+- **The key** is never in the repository: on EC2 it goes in `/etc/pdf-system.env`
+  (root-only, created by `deploy/setup.sh`); then `sudo systemctl restart pdf-system`.
+
 Environment variables: `ENABLE_REPAIRS=false` switches repair off (Phase 4 behaviour);
-`LLM_ENABLED=false` switches the AI suggestions off (rule-based fallbacks only).
+`LLM_ENABLED=false` switches the AI suggestions off (rule-based fallbacks only); every
+`LLM_*` setting is listed at the top of `llm.py`.
 
 ## Tester (`tester/` folder)
 
@@ -254,6 +286,7 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
 
 - `main.py`: HTTP routes, error handling, request logging
 - `pipeline.py`: input validation, runs the registered checks, repair and re-validation, findings, report PDF
+- `llm.py`: the shared LLM client (configuration, limits, cache, retries, mock mode)
 - `remediation/`: the repair registry and one module per repaired check (`title.py`, `lang.py`), plus `ai.py`, the single hook for LLM text (see `remediation/README.md`)
 - `checks/`: the check registry and one module per check (see `checks/README.md`)
 - `pdf_checks.py`: image and document/table structure inspection (CHK-NONTEXT, CHK-STRUCTURE)
