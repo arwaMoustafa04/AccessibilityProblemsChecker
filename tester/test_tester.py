@@ -57,12 +57,11 @@ def test_full_suite_passes_against_our_system(target) -> None:
     check_report_format(report)
     assert report["session_id"] == sid and report["target_url"] == TARGET
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-    assert outcomes.pop("T-14") == "skip"  # repair is Phase 5
-    assert set(outcomes.values()) == {"pass"}
+    assert set(outcomes.values()) == {"pass"}  # Phase 5: the repair test T-14 runs too
     cov = report["coverage"]
-    # Phase 4 adds detection and classification (T-13); repair components are Phase 5.
-    assert (cov["component"]["covered"], cov["component"]["total"]) == (6, 8)
-    assert (cov["system"]["covered"], cov["system"]["total"]) == (8, 10)
+    # Repair and re-validation (T-14) complete the component and acceptance criteria.
+    assert (cov["component"]["covered"], cov["component"]["total"]) == (8, 8)
+    assert (cov["system"]["covered"], cov["system"]["total"]) == (10, 10)
     assert 0 < cov["code"]["covered"] <= cov["code"]["total"]
 
     # Stored report is returned unchanged, and the session cannot be run again.

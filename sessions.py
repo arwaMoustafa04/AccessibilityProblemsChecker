@@ -28,12 +28,14 @@ SOURCE_DIR = Path(__file__).resolve().parent
 # Command-line tools kept in the repository that the running service never imports.
 NOT_SERVICE_CODE = {"contract_report.py"}
 MEASURED_FILES = sorted(  # this service's modules, including the checks/ package
-    str(p) for p in [*SOURCE_DIR.glob("*.py"), *SOURCE_DIR.glob("checks/*.py")]
+    str(p) for p in [*SOURCE_DIR.glob("*.py"), *SOURCE_DIR.glob("checks/*.py"),
+                     *SOURCE_DIR.glob("remediation/*.py")]
     if not p.name.startswith("test_") and p.name != "conftest.py"
     and p.name not in NOT_SERVICE_CODE
 )
 BASIS = ("Statements (coverage.py) of this service's Python modules, main.py, pipeline.py, "
-         "models.py, catalog.py, sessions.py, pdf_checks.py and checks/*.py, executed for "
+         "models.py, catalog.py, sessions.py, pdf_checks.py, checks/*.py and remediation/*.py, "
+         "executed for "
          "this session: the lines run while handling its POST /process requests since "
          "setup, plus the lines that run when those modules load (imports, definitions, "
          "models), measured once in a clean interpreter. contract_report.py is a "

@@ -60,12 +60,20 @@ def test_endpoint_review_contract(case):
             "missing_figure_alt", "missing_document_structure"} else "needs_review"
         assert finding["evaluation_result"] == expected
         assert finding["location"]["object_ref"]
-    assert body["summary"] == {"total_issues": len(findings), "fixed_count": 0,
+    fixed = [f for f in findings if f["status"] == "fixed"]
+    assert body["summary"] == {"total_issues": len(findings), "fixed_count": len(fixed),
                                "human_review_count": len(body["human_review_items"])}
-    assert body["repairs"] == body["new_issues_after_repair"] == []
-    assert body["outcome"] == "completed_no_repairs"
-    assert body["output_pdf"]["modified"] is False
-    assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
+    # Phase 5 repairs only the auto-fixable title/language findings; the NONTEXT and
+    # STRUCTURE findings above stay needs_human_review, and repairs add no new issues.
+    repaired_ids = {r["finding_id"] for r in body["repairs"]}
+    assert repaired_ids == {f["finding_id"] for f in findings
+                            if f["classification"] == "auto_fixable"}
+    assert not repaired_ids & {f["finding_id"] for f in mine}
+    assert body["new_issues_after_repair"] == []
+    assert body["outcome"] == ("completed_with_repairs" if repaired_ids else "completed_no_repairs")
+    if not repaired_ids:
+        assert body["output_pdf"]["modified"] is False
+        assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
     with pikepdf.open(io.BytesIO(base64.b64decode(body["report_pdf"]["content_base64"]))) as report:
         assert len(report.pages) >= 1
         text = b"".join(s.read_bytes() for page in report.pages
@@ -237,9 +245,12 @@ def test_revalidation_distinguishes_same_type_at_different_locations(monkeypatch
     def evaluate(data, file_name, pdf):
         return (CheckRun(performed=["CHK-NONTEXT", "CHK-TITLE"], issues=next(results)),
                 CheckContext(data, file_name, pdf))
+    from remediation import RepairAction, RepairContext
     monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
     monkeypatch.setattr(pipeline, "evaluate", evaluate)
-    monkeypatch.setattr(pipeline, "repair", lambda *args: {"missing_document_title": "Set title"})
+    monkeypatch.setattr(pipeline, "repair", lambda pdf, issues, ctx, name: (
+        {i.key: RepairAction("Set title") for i in issues
+         if i.issue_type == "missing_document_title"}, RepairContext(pdf, ctx, name)))
     result = pipeline.run_pipeline(make_fixture("tagged_image"), "same_type.pdf")
     assert [f.status for f in result.findings] == ["fixed", "repair_failed"]
     assert [r.validation_result for r in result.repairs] == ["passed", "failed"]
@@ -276,8 +287,10 @@ def test_malformed_pdf_endpoint_remains_reviewable():
     body = response.json()
     assert {f["issue_type"] for f in body["findings"]} >= {
         "malformed_structure", "image_inspection_incomplete"}
-    assert body["repairs"] == []
-    assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
+    # Only the auto-fixable title/language findings are repaired; the malformed-structure
+    # and image findings stay for human review.
+    by_id = {f["finding_id"]: f for f in body["findings"]}
+    assert all(by_id[r["finding_id"]]["classification"] == "auto_fixable" for r in body["repairs"])
 
 
 # --- Generic (placeholder) Figure alternative text ---------------------------

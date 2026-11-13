@@ -70,6 +70,9 @@ class Finding(Strict):
     classification: Classification
     status: FindingStatus
     fix_description: str | None = None
+    # Optional (spec v0.5.0): the concrete proposed text, and who wrote it.
+    suggested_text: str | None = None
+    suggestion_source: Literal["rule", "llm"] | None = None
 
 
 class Repair(Strict):
@@ -77,6 +80,9 @@ class Repair(Strict):
     finding_id: str
     action: str
     validation_result: Literal["passed", "failed"]
+    # Optional (spec v0.5.0): "llm" when the written text came from a language model.
+    method: Literal["rule", "llm"] = "rule"
+    applied_text: str | None = None  # the text written into the PDF, if any
 
 
 class InputFile(Strict):

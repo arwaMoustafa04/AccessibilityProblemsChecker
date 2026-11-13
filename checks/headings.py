@@ -11,6 +11,8 @@ here is for human review. The check finds what can be detected automatically:
 
 from __future__ import annotations
 
+import re
+
 from checks.base import CheckContext, Issue
 from checks.structure_tree import STANDARD_HEADINGS, iter_elements
 from checks.text_layout import lines, probable_headings
@@ -21,6 +23,25 @@ MAX_ISSUES_PER_TYPE = 20  # keeps the response readable for very large documents
 
 def _level(tag: str) -> int | None:
     return int(tag[2]) if len(tag) == 3 and tag[2].isdigit() else None
+
+
+# Names that tools give fields automatically ("Text1", "Check Box 3"): not a label.
+_GENERATED_NAME = re.compile(r"^(?:text|textfield|field|check ?box|checkbox|radio|"
+                             r"button|combo ?box|list ?box|dropdown|untitled)[\s_\-.]*\d*$",
+                             re.IGNORECASE)
+
+
+def label_from_field_name(name: str) -> str | None:
+    """A readable label from a field name ("first_name" -> "First name"), or None
+    when the name is generated or empty and says nothing about the field."""
+    if not name or name == "(unnamed)" or _GENERATED_NAME.match(name.strip()):
+        return None
+    words = re.sub(r"([a-z])([A-Z])", r"\1 \2", name)  # firstName -> first Name
+    words = re.sub(r"[_\-.]+", " ", words)
+    words = re.sub(r"\s+", " ", words).strip().lower()
+    if len(words) < 2 or words.isdigit():
+        return None
+    return words[:1].upper() + words[1:]
 
 
 def _heading_issues(ctx: CheckContext) -> list[Issue]:
@@ -56,7 +77,8 @@ def _heading_issues(ctx: CheckContext) -> list[Issue]:
             CHECK_ID, "first_heading_not_h1",
             f"The first heading is {first.tag[1:]}, not H1.",
             evaluation_result="needs_review", page=first.page, object_ref=first.ref,
-            suggestion="Start the heading outline at H1.", sources=["pikepdf"]))
+            suggestion="Start the heading outline at H1.", sources=["pikepdf"],
+            suggested_text="H1", suggestion_source="rule"))
 
     skips = 0
     for prev, cur in zip(numbered, numbered[1:], strict=False):
@@ -67,7 +89,8 @@ def _heading_issues(ctx: CheckContext) -> list[Issue]:
                 CHECK_ID, "heading_level_skipped",
                 f"Heading level jumps from {prev.tag[1:]} to {cur.tag[1:]}.",
                 page=cur.page, object_ref=cur.ref,
-                suggestion=f"Use H{a + 1} here, or add the missing level.", sources=["pikepdf"]))
+                suggestion=f"Use H{a + 1} here, or add the missing level.", sources=["pikepdf"],
+                suggested_text=f"H{a + 1}", suggestion_source="rule"))
 
     for h in [h for h in headings if not h.has_content()][:MAX_ISSUES_PER_TYPE]:
         issues.append(Issue(
@@ -98,12 +121,15 @@ def _label_issues(ctx: CheckContext) -> list[Issue]:
             continue  # a widget of a field already checked through its parent
         name = str(field.get("/T", "")).strip() or "(unnamed)"
         page = ctx.page_of(field.get("/P"))
+        label = label_from_field_name(name)
         issues.append(Issue(
             CHECK_ID, "form_field_without_label",
             f'Form field "{name}" has no accessible label (/TU).',
             page=page, object_ref=f"{field.objgen[0]} {field.objgen[1]} R",
-            suggestion="Give the field a label (tooltip) that describes what to enter.",
-            sources=["pikepdf"]))
+            suggestion=("Give the field a label (tooltip) that describes what to enter"
+                        + (f', for example "{label}".' if label else ".")),
+            sources=["pikepdf"],
+            suggested_text=label, suggestion_source="rule" if label else None))
         if len(issues) >= MAX_ISSUES_PER_TYPE:
             break
     return issues

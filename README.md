@@ -4,9 +4,11 @@ Team 1 (West Lafayette, Pod D) implementation of the pod's shared PDF accessibil
 service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WCAG 2.1 AA).
 `POST /process` runs all eight agreed checks, registered in `checks/__init__.py`:
 non-text content and structure (`pdf_checks.py`), sensory, color and link
-(Person 2), and title, language and headings (Person 3). Automatic repair remains
-disabled by default (Phase 5). This README describes the system **as delivered at the
-end of Phase 4**, which is the version deployed at the URLs below.
+(Person 2), and title, language and headings (Person 3). **Phase 5 (in progress):**
+automatic repair is on, with the repair framework in `remediation/` and the title and
+language repairs done (see [Automatic repair](#automatic-repair-phase-5)). Other parts
+of this README describe the system as delivered at the end of Phase 4 until Phase 5
+is deployed.
 
 See [`checks/README.md`](checks/README.md) for each check, and
 [Person 2 fixtures and tests](test_fixtures/person2/README.md) for the sensory,
@@ -81,7 +83,9 @@ Course test endpoints:
   `compliance_statement` ("This report does not certify ADA Title II or WCAG 2.1
   conformance."), `output_pdf` and `report_pdf` (file name, media type, SHA-256,
   `modified`, Base64 content).
-- **Finding / Repair / Location**: check results and locations; human-review findings never create repair records.
+- **Finding / Repair / Location**: check results and locations. Optional (spec v0.5.0):
+  `Finding.suggested_text` and `suggestion_source` (`rule` or `llm`) give the concrete
+  proposed text; `Repair.method` (`rule` or `llm`) and `applied_text` say what was written.
   `Location.bbox` (optional, nullable) is `[x0, y0, x1, y1]` on `page` in PDF user space, so a
   viewer can highlight the finding; `checks/locate.py` fills it where the position is known.
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
@@ -111,11 +115,45 @@ upload (see [`checks/README.md`](checks/README.md)); the image and structure che
   `needs_review`. Nested tables are inspected separately.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
   and finding IDs in `human_review_items`. They never trigger repairs.
-- CHK-TITLE and CHK-LANG findings are `auto_fixable` and reported as `detected`;
-  automatic repair is opt-in via `ENABLE_REPAIRS=true`. Without it the original PDF
-  is returned byte-for-byte unchanged. JSON and report PDF include performed checks,
-  findings, locations and limitations.
+- CHK-TITLE and CHK-LANG findings are `auto_fixable` and are repaired automatically
+  (next section); they become `fixed` or `repair_failed`. With `ENABLE_REPAIRS=false`
+  they are reported as `detected` and the original PDF is returned byte-for-byte
+  unchanged. JSON and report PDF include performed checks, findings, locations,
+  repairs and limitations.
 - PDFs are processed in memory and never stored.
+
+### Automatic repair (Phase 5)
+
+Repairs run on a copy of the upload (the upload itself is never changed). Then
+**every check runs again on the repaired PDF**: a repair passes re-validation when its
+issue (same check, type and place) is gone, and anything the repairs introduced is
+listed in `new_issues_after_repair`. Object numbers change when a PDF is saved, so
+before/after findings are matched by walking both files side by side
+(`pipeline.object_number_map`).
+
+| Check | Issue | Repair |
+|---|---|---|
+| CHK-TITLE | missing title, placeholder or file-name title | New title in Info `/Title` and XMP `dc:title`: an AI suggestion from page 1 if an LLM is set up, else the largest heading on page 1, else the cleaned file name |
+| CHK-TITLE | title only in Info, not XMP | Copies it into XMP `dc:title` (other Info fields are kept) |
+| CHK-TITLE | `DisplayDocTitle` not set | Sets `ViewerPreferences/DisplayDocTitle` to true |
+| CHK-LANG | missing or invalid document language | Corrects a broken tag (`en_US` → `en-US`, `English` → `en`), else detects the language from the text (`langdetect`, offline), else assumes `en-US` and says so in `limitations` |
+| CHK-LANG | invalid passage language | Corrects the tag, or removes it so the passage uses the document language |
+
+- **auto_fixable** findings become `fixed` or `repair_failed`. **human_review** findings
+  are never resolved automatically: a repair can be recorded for them (for example
+  AI-drafted alt text, once added), but they stay `needs_human_review` (spec v0.5.0).
+- **AI text** (`method: "llm"`) is labeled "AI-generated, please verify" in the
+  repairs and the report PDF, and `limitations` says the text was sent to an external
+  model provider. If the LLM is missing, slow or fails, the rule-based fallback is used
+  and noted; an LLM problem never fails the request.
+- CHK-HEADINGS findings (human review) carry rule-based `suggested_text` where the fix
+  is clear: the right heading level (`H1`, `H3`), or a form label from the field name
+  (`first_name` → "First name").
+- Adding a repair, and the `llm.py` functions the AI hook expects:
+  [`remediation/README.md`](remediation/README.md).
+
+Environment variables: `ENABLE_REPAIRS=false` switches repair off (Phase 4 behaviour);
+`LLM_ENABLED=false` switches the AI suggestions off (rule-based fallbacks only).
 
 ## Tester (`tester/` folder)
 
@@ -166,6 +204,10 @@ lines run while handling its `/process` requests, plus lines that run when those
 load (imports, definitions, models), measured once at startup in a clean interpreter.
 `contract_report.py` is a standalone script, not part of the service, so it is not counted.
 
+**Phase 5 so far, local run (Nov 13, 2026, without veraPDF):** 21 pass, 0 fail, 0 skip
+(T-14 now runs and passes); component coverage 8/8, system coverage 10/10, code
+coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
+
 **Phase 4 result against our deployed system (Oct 31, 2026):** 13 pass, 0 fail, 1 skip
 (T-14, repair, Phase 5); component coverage 6/8, system (acceptance-criteria) coverage
 8/10. `contract_report.py` against the deployed system: all responses conform.
@@ -181,9 +223,12 @@ load (imports, definitions, models), measured once at startup in a clean interpr
   findings for incomplete inspection. Tree depth over 128, more than 100,000 structure
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
 - CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
-  targets; these heuristics can miss issues or flag acceptable content. Automatic
-  repair remains behind `ENABLE_REPAIRS` (off by default), so auto-fixable findings are
-  reported as `detected` and the output PDF is the unchanged upload.
+  targets; these heuristics can miss issues or flag acceptable content.
+- **Repairs cover CHK-TITLE and CHK-LANG only** (Phase 5 in progress). A rule-based
+  title is only as good as page 1's largest heading or the file name, and a language
+  detected from very little text is assumed (`en-US`) and flagged for review. An
+  auto-fixable finding with no repair (e.g. veraPDF's `text_language_not_determinable`)
+  stays `detected`.
 - **Scanned or image-only PDFs** are not really evaluated: there is no OCR, so the
   text-based checks find nothing on pages without a text layer.
 - **Speed:** veraPDF adds about 2-4 s per `/process` call, and processing time grows
@@ -196,7 +241,7 @@ load (imports, definitions, models), measured once at startup in a clean interpr
 - **All encrypted PDFs** are rejected with 422, including ones that open without a
   password (agreed spec behavior).
 - **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
-  conformance; human-review items are never repaired automatically.
+  conformance; human-review items are never resolved automatically.
 - **Sessions are in memory** (system and tester): they are lost when a service
   restarts, and system coverage measurement handles one measured request at a time.
 - **HTTP only, no authentication**, single small EC2 instance: no HTTPS certificate,
@@ -208,7 +253,8 @@ load (imports, definitions, models), measured once at startup in a clean interpr
 ## Code layout
 
 - `main.py`: HTTP routes, error handling, request logging
-- `pipeline.py`: input validation, runs the registered checks, findings, report PDF, gated repair
+- `pipeline.py`: input validation, runs the registered checks, repair and re-validation, findings, report PDF
+- `remediation/`: the repair registry and one module per repaired check (`title.py`, `lang.py`), plus `ai.py`, the single hook for LLM text (see `remediation/README.md`)
 - `checks/`: the check registry and one module per check (see `checks/README.md`)
 - `pdf_checks.py`: image and document/table structure inspection (CHK-NONTEXT, CHK-STRUCTURE)
 - `checks/locate.py`: where each finding is on its page (`Location.bbox`), for the UI's highlight
@@ -217,7 +263,7 @@ load (imports, definitions, models), measured once at startup in a clean interpr
 - `sessions.py`: test sessions and per-session code coverage (coverage.py)
 - `contract_report.py`: contract-conformance table for any deployed system
 - `tester/app.py`: tester endpoints, sessions, report, coverage aggregation
-- `tester/suite.py`: the 14 test cases
+- `tester/suite.py`: the 21 test cases (`CURRENT_PHASE = 5`)
 - `deploy/setup.sh`: EC2 install (venv, veraPDF, UI build, systemd services, nginx)
 - `frontend/`: React + Vite web UI (upload, results, PDF viewer with highlights)
 - `.github/workflows/ci.yml`: ruff, mypy, OpenAPI validation, pip-audit, pytest, conformance report, full tester run
@@ -231,8 +277,8 @@ load (imports, definitions, models), measured once at startup in a clean interpr
 custom roles, MCID scoping, artifacts, repeated images, table nesting, response/report
 contents, and mixed review findings with flagged automatic repairs.
 
-With all eight checks registered and `CURRENT_PHASE = 4` in `tester/suite.py`, the
-shared tester's full-detection test (T-13) runs and passes.
+With all eight checks registered and `CURRENT_PHASE = 5` in `tester/suite.py`, the
+shared tester's full-detection test (T-13) and repair test (T-14) run and pass.
 
 ## Run locally
 

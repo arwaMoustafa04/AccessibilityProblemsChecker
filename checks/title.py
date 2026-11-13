@@ -31,8 +31,10 @@ def xmp_title(ctx: CheckContext) -> str:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # pikepdf warns about odd dates in XMP
-            with ctx.pdf.open_metadata(set_pikepdf_as_editor=False) as meta:
-                return str(meta.get("dc:title", "") or "").strip()
+            # Read only: leaving a `with open_metadata()` block writes the XMP back and
+            # syncs the Info dictionary from it, which deletes an Info-only /Title.
+            meta = ctx.pdf.open_metadata(set_pikepdf_as_editor=False)
+            return str(meta.get("dc:title", "") or "").strip()
     except Exception:
         return ""
 

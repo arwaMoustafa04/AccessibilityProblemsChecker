@@ -168,8 +168,10 @@ def test_openapi_operation_ids_are_unique() -> None:
 
 # --- POST /process: success ---------------------------------------------------
 
-def test_phase4_detects_and_classifies_without_repairing(post_pdf) -> None:
-    """Phase 4 (default): checks run, findings are classified, nothing is repaired."""
+def test_phase4_detects_and_classifies_without_repairing(post_pdf, monkeypatch) -> None:
+    """ENABLE_REPAIRS=false (the Phase 4 behaviour): findings classified, nothing repaired."""
+    import pipeline
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", False)
     original = make_pdf()  # untagged; missing title, DisplayDocTitle and language
     response = post_pdf(original, name="annual_report.pdf")
     assert response.status_code == 200
@@ -242,7 +244,7 @@ def test_crashing_check_is_reported_not_500(post_pdf, monkeypatch) -> None:
 
 @pytest.fixture
 def repairs_on(monkeypatch):
-    """Turn on the Phase 5 repair path (off by default in Phase 4)."""
+    """The Phase 5 repair path (on by default; set here so the tests do not depend on env)."""
     import pipeline
     monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
 
@@ -270,8 +272,18 @@ def test_pdf_missing_title_and_language_is_repaired(repairs_on, post_pdf) -> Non
     assert body["output_pdf"]["modified"] is True
     assert hashlib.sha256(repaired).hexdigest() == body["output_pdf"]["sha256"]
     with pikepdf.open(io.BytesIO(repaired)) as pdf:
-        assert str(pdf.docinfo["/Title"]) == "annual report"
+        # A blank page has no heading to use, so the title comes from the file name, and
+        # there is too little text to detect a language, so en-US is assumed (and noted).
+        assert str(pdf.docinfo["/Title"]) == "Annual report"
         assert str(pdf.Root.Lang) == "en-US"
+    assert any("en-US was assumed" in line for line in body["limitations"])
+    by_id = {f["finding_id"]: f for f in body["findings"]}
+    for r in body["repairs"]:
+        assert r["method"] == "rule"
+        if by_id[r["finding_id"]]["issue_type"] == "missing_document_title":
+            assert r["applied_text"] == "Annual report"
+            assert by_id[r["finding_id"]]["suggested_text"] == "Annual report"
+            assert by_id[r["finding_id"]]["suggestion_source"] == "rule"
         assert pdf.Root.ViewerPreferences.DisplayDocTitle is True
     # The upload itself was never modified (REQ-07, REQ-17).
     assert hashlib.sha256(original).hexdigest() == original_hash

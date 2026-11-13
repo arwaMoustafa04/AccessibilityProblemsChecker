@@ -33,6 +33,10 @@ class Issue:
     sources: list[str] = field(default_factory=list)  # tools that found it, e.g. ["pikepdf"]
     # [x0, y0, x1, y1] on `page` in PDF user space; filled by checks/locate.py if not set here
     bbox: list[float] | None = None
+    # Concrete proposed text for the fix (alt text, link text, a title, a heading level),
+    # and who wrote it: "rule" (template/fixed text) or "llm" (spec v0.5.0, optional).
+    suggested_text: str | None = None
+    suggestion_source: Literal["rule", "llm"] | None = None
 
     @property
     def key(self) -> tuple:

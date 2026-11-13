@@ -3,15 +3,15 @@
 Stages (shared spec, POST /process description):
 RECEIVED -> VALIDATED -> EVALUATED -> CLASSIFIED -> REPAIRED -> REVALIDATED -> REPORTED
 
-Phase 4 (current): input validation, then every registered check in checks/
-(all eight agreed checks; CHK-NONTEXT and CHK-STRUCTURE come from pdf_checks.py).
-Findings are classified from catalog.py. No repairs: auto-fixable findings are
-reported with status "detected" and the PDF is returned unchanged. Checks that
-are not implemented yet are listed in limitations, so an empty findings list is
-never mistaken for "checked and passed".
+Input validation, then every registered check in checks/ (all eight agreed
+checks; CHK-NONTEXT and CHK-STRUCTURE come from pdf_checks.py). Findings are
+classified from catalog.py. Checks that are not implemented are listed in
+limitations, so an empty findings list is never mistaken for "checked and passed".
 
-Automatic repair (Phase 5) is already here but switched OFF. Set the environment
-variable ENABLE_REPAIRS=true to try it locally.
+Phase 5: the registered repairs in remediation/ fix what they can on a copy of
+the PDF, then every check runs again on the repaired copy (re-validation). Set the
+environment variable ENABLE_REPAIRS=false to switch repair off (Phase 4 behaviour:
+auto-fixable findings are reported as "detected" and the PDF is returned unchanged).
 """
 
 from __future__ import annotations
@@ -42,13 +42,13 @@ from models import (
     OutputFile,
     Repair,
 )
+from remediation import RepairAction, RepairContext, apply_repairs, can_repair
 
 MAX_FILE_SIZE_BYTES = 20_971_520
-DEFAULT_LANGUAGE = "en-US"
 COMPLIANCE_STATEMENT = "This report does not certify ADA Title II or WCAG 2.1 conformance."
 
-# Off by default: Phase 4 detects and classifies only. Repair is Phase 5.
-ENABLE_REPAIRS = os.environ.get("ENABLE_REPAIRS", "").lower() in ("1", "true", "yes")
+# On by default (Phase 5). ENABLE_REPAIRS=false gives the Phase 4 behaviour.
+ENABLE_REPAIRS = os.environ.get("ENABLE_REPAIRS", "true").lower() not in ("0", "false", "no")
 
 
 class PipelineError(Exception):
@@ -129,35 +129,17 @@ def _where(issue: Issue) -> str:
 
 # --- REPAIRED ----------------------------------------------------------------
 
-def _title_from_filename(file_name: str) -> str:
-    stem = PurePath(file_name).stem.replace("_", " ").replace("-", " ").strip()
-    return stem or "Untitled document"
+def repair(pdf: pikepdf.Pdf, issues: list[Issue], ctx: CheckContext,
+           file_name: str) -> tuple[dict[tuple, RepairAction], RepairContext]:
+    """Apply the registered repairs (remediation/) to this copy of the PDF.
 
-
-def repair(pdf: pikepdf.Pdf, issues: list[Issue], file_name: str) -> dict[str, str]:
-    """Apply supported fixes to this (already copied) PDF; return issue_type -> action."""
-    actions: dict[str, str] = {}
-    for issue in issues:
-        if issue.issue_type == "missing_document_title":
-            title = _title_from_filename(file_name)
-            pdf.docinfo["/Title"] = title
-            with pdf.open_metadata(set_pikepdf_as_editor=False) as meta:
-                meta["dc:title"] = title
-            actions[issue.issue_type] = f'Set document title to "{title}" (from file name)'
-        elif issue.issue_type == "title_missing_from_xmp":
-            title = str(pdf.docinfo.get("/Title", "")).strip()
-            with pdf.open_metadata(set_pikepdf_as_editor=False) as meta:
-                meta["dc:title"] = title
-            actions[issue.issue_type] = "Copied the document title into the XMP metadata"
-        elif issue.issue_type == "display_doc_title_not_set":
-            if "/ViewerPreferences" not in pdf.Root:
-                pdf.Root.ViewerPreferences = pikepdf.Dictionary()
-            pdf.Root.ViewerPreferences.DisplayDocTitle = True
-            actions[issue.issue_type] = "Set ViewerPreferences/DisplayDocTitle to true"
-        elif issue.issue_type == "missing_document_language":
-            pdf.Root.Lang = pikepdf.String(DEFAULT_LANGUAGE)
-            actions[issue.issue_type] = f"Set document language to {DEFAULT_LANGUAGE}"
-    return actions
+    Returns Issue.key -> what was done, and the RepairContext (notes for limitations).
+    """
+    rctx = RepairContext(pdf=pdf, check=ctx, file_name=file_name)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # pikepdf XMP sync warnings on odd metadata
+        actions = apply_repairs([i for i in issues if can_repair(i)], rctx)
+    return actions, rctx
 
 
 # --- REPORTED ----------------------------------------------------------------
@@ -203,6 +185,10 @@ def build_report_pdf(result: dict) -> bytes:
                            f"Result: {f['evaluation_result']}. Status: {f['status']}."))
             if f.get("fix_description"):
                 story.append(p(f["fix_description"]))
+            if f.get("suggested_text"):
+                label = (" (AI-generated, please verify)"
+                         if f.get("suggestion_source") == "llm" else "")
+                story.append(p(f'Suggested text{label}: "{f["suggested_text"]}"'))
     elif result["checks_performed"]:
         story.append(p("No issues found by the checks performed."))
     else:
@@ -210,8 +196,9 @@ def build_report_pdf(result: dict) -> bytes:
     story.append(p("Automatic repairs", "Heading2"))
     if result["repairs"]:
         for r in result["repairs"]:
+            ai_label = " AI-generated, please verify." if r.get("method") == "llm" else ""
             story.append(p(f"{r['repair_id']} for {r['finding_id']}: {r['action']}. "
-                           f"Re-validation: {r['validation_result']}."))
+                           f"Re-validation: {r['validation_result']}.{ai_label}"))
     else:
         story.append(p("No repairs were applied."))
     story.append(p("Needs human review", "Heading2"))
@@ -254,8 +241,14 @@ def build_results_zip(result: EvaluationResult, original: bytes) -> bytes:
 
 # --- Whole pipeline ----------------------------------------------------------
 
-def _finding(fid: str, issue: Issue, status: FindingStatus) -> Finding:
+def _finding(fid: str, issue: Issue, status: FindingStatus,
+             action: RepairAction | None = None) -> Finding:
     check = CHECKS_BY_ID[issue.check_id]
+    suggested, source = issue.suggested_text, issue.suggestion_source
+    if suggested is None and action is not None and action.applied_text:
+        suggested, source = action.applied_text, action.method  # what the repair wrote
+    if suggested is not None and source is None:
+        source = "rule"
     explanation = issue.description
     if issue.suggestion:
         explanation += f" Suggested fix: {issue.suggestion.strip()}"
@@ -271,10 +264,13 @@ def _finding(fid: str, issue: Issue, status: FindingStatus) -> Finding:
         classification=check.classification,
         status=status,
         fix_description=explanation,
+        suggested_text=suggested,
+        suggestion_source=source if suggested is not None else None,
     )
 
 
-def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool) -> list[str]:
+def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool,
+                 repair_notes: list[str] | None = None, unrepaired_fixable: int = 0) -> list[str]:
     notes = []
     if run.not_implemented:
         notes.append("Checks " + ", ".join(run.not_implemented)
@@ -285,9 +281,16 @@ def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool) -> list[str]:
         notes.append(f"PDF/UA-1 validation with veraPDF was not used ({ctx.verapdf.error}); "
                      "checks used pikepdf and PyMuPDF only.")
     if not repaired:
-        notes.append("Automatic repair is not enabled in this version (planned for Phase 5): "
-                     "auto-fixable findings are reported as detected and the PDF is "
-                     "returned unchanged.")
+        notes.append("Automatic repair is switched off (ENABLE_REPAIRS=false): auto-fixable "
+                     "findings are reported as detected and the PDF is returned unchanged.")
+    else:
+        notes.append("Automatic repair covers CHK-TITLE (title, XMP title, DisplayDocTitle) "
+                     "and CHK-LANG (document and passage language). Repairs are made on a "
+                     "copy and re-validated by running every check again.")
+        if unrepaired_fixable:
+            notes.append(f"{unrepaired_fixable} auto-fixable finding(s) have no automatic "
+                         "repair yet and are reported as detected.")
+    notes.extend(repair_notes or [])
     notes.append("CHK-SENSORY and CHK-COLOR use English text cues; CHK-COLOR also flags "
                  "multicolor vector graphics. No OCR or raster-image color analysis is performed. "
                  "CHK-LINK inspects annotations and labels without visiting destinations. "
@@ -297,25 +300,75 @@ def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool) -> list[str]:
                  "table semantics require human review. Untagged tables and vector graphics are "
                  "not inferred. A present Alt or TH tag does not establish accessibility or "
                  "semantic correctness.")
-    notes.append("Human-review findings are never repaired automatically.")
+    notes.append("Human-review findings are never resolved automatically; any AI-generated "
+                 "text written for them is marked and must be verified by a person.")
     notes.append("Automated checks cannot confirm every WCAG 2.1 requirement; a person "
                  "should review the document.")
     return notes
 
 
-def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: CheckRun):
-    """Phase 5 (ENABLE_REPAIRS): fix auto-fixable issues, then re-run the checks."""
-    fixable = [i for i in run.issues if _status(i) == "detected"]
-    actions = repair(pdf, fixable, file_name) if fixable else {}
+MAX_MAPPED_OBJECTS = 300_000  # bounds the object matching below on very large files
+_INDIRECT_REF = re.compile(r"\b(\d+) (\d+) R\b")
+
+
+def object_number_map(before: pikepdf.Pdf, after: pikepdf.Pdf) -> dict[tuple[int, int], tuple[int, int]]:
+    """Map object numbers in `before` to the same objects in `after`.
+
+    Saving a PDF renumbers its objects, so an issue at "5 0 R" before repair can be
+    the same object as "6 0 R" after it. Both files are walked side by side from the
+    trailer (same keys, same array positions); repairs change only small parts, so
+    every object both walks reach at the same place is matched.
+    """
+    mapping: dict[tuple[int, int], tuple[int, int]] = {}
+    stack: list[tuple[pikepdf.Object, pikepdf.Object]] = [(before.trailer, after.trailer)]
+    visited: set[tuple[int, int]] = set()
+    steps = 0
+    while stack and steps < MAX_MAPPED_OBJECTS:
+        old, new = stack.pop()
+        steps += 1
+        if not isinstance(old, pikepdf.Object) or not isinstance(new, pikepdf.Object):
+            continue  # numbers and booleans come back as plain Python values
+        if old.is_indirect:
+            if old.objgen in visited:
+                continue
+            visited.add(old.objgen)
+            if new.is_indirect:
+                mapping[old.objgen] = new.objgen
+        if isinstance(old, pikepdf.Array) and isinstance(new, pikepdf.Array):
+            stack.extend(zip(old, new, strict=False))
+        elif isinstance(old, (pikepdf.Dictionary, pikepdf.Stream)) and isinstance(
+                new, (pikepdf.Dictionary, pikepdf.Stream)):
+            for key in old.keys():
+                if key in new and key != "/Parent":  # /Parent leads back up the tree
+                    stack.append((old[key], new[key]))
+    return mapping
+
+
+def _translated_key(issue: Issue, mapping: dict[tuple[int, int], tuple[int, int]]) -> tuple:
+    """Issue.key with object numbers rewritten to the repaired file's numbering."""
+    ref = issue.object_ref
+    if ref and mapping:
+        def swap(m: re.Match) -> str:
+            new = mapping.get((int(m[1]), int(m[2])))
+            return f"{new[0]} {new[1]} R" if new else m[0]
+        ref = _INDIRECT_REF.sub(swap, ref)
+    return issue.check_id, issue.issue_type, issue.page, ref
+
+
+def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: CheckRun,
+                           ctx: CheckContext):
+    """Phase 5: apply the registered repairs, then re-run every check on the result."""
+    actions, rctx = repair(pdf, run.issues, ctx, file_name)
     if not actions:
-        return data, actions, run.issues
+        return data, actions, run.issues, rctx.notes, {}
     out = io.BytesIO()
     pdf.save(out)
     repaired_bytes = out.getvalue()
     with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
         after, after_ctx = evaluate(repaired_bytes, file_name, repaired)
         after_ctx.close()
-    return repaired_bytes, actions, after.issues
+        mapping = object_number_map(pdf, repaired)
+    return repaired_bytes, actions, after.issues, rctx.notes, mapping
 
 
 def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
@@ -324,11 +377,18 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     try:
         run, ctx = evaluate(data, file_name, pdf)
         try:
+            repair_notes: list[str] = []
+            mapping: dict[tuple[int, int], tuple[int, int]] = {}
             if ENABLE_REPAIRS:
-                output_bytes, actions, remaining = _repair_and_revalidate(pdf, data, file_name, run)
+                output_bytes, actions, remaining, repair_notes, mapping = _repair_and_revalidate(
+                    pdf, data, file_name, run, ctx)
             else:
                 output_bytes, actions, remaining = data, {}, run.issues
-            limitations = _limitations(run, ctx, repaired=ENABLE_REPAIRS)
+            unrepaired = sum(1 for i in run.issues
+                             if _status(i) == "detected" and i.key not in actions)
+            limitations = _limitations(run, ctx, repaired=ENABLE_REPAIRS,
+                                       repair_notes=repair_notes,
+                                       unrepaired_fixable=unrepaired)
         finally:
             ctx.close()
     finally:
@@ -336,20 +396,25 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
 
     # Matched by type *and* place, so one fixed and one unfixed issue of the same type
     # are told apart (Issue.key).
+    # Object numbers change when the repaired PDF is saved; compare in its numbering.
     remaining_keys = {i.key for i in remaining}
-    original_keys = {i.key for i in run.issues}
+    original_keys = {_translated_key(i, mapping) for i in run.issues}
     findings: list[Finding] = []
     repairs: list[Repair] = []
     for n, issue in enumerate(run.issues, start=1):
         fid = f"F-{n}"
         status = _status(issue)
-        if issue.issue_type in actions:
-            fixed = issue.key not in remaining_keys
-            status = "fixed" if fixed else "repair_failed"
+        action = actions.get(issue.key)
+        if action is not None:
+            fixed = _translated_key(issue, mapping) not in remaining_keys
+            if status == "detected":  # auto_fixable: the repair decides the status
+                status = "fixed" if fixed else "repair_failed"
+            # human_review stays needs_human_review: a person must verify it (spec v0.5.0)
             repairs.append(Repair(repair_id=f"R-{len(repairs) + 1}", finding_id=fid,
-                                  action=actions[issue.issue_type],
-                                  validation_result="passed" if fixed else "failed"))
-        findings.append(_finding(fid, issue, status))
+                                  action=action.action,
+                                  validation_result="passed" if fixed else "failed",
+                                  method=action.method, applied_text=action.applied_text))
+        findings.append(_finding(fid, issue, status, action))
     new_issues = [
         _finding(f"N-{n}", i, _status(i))
         for n, i in enumerate(
