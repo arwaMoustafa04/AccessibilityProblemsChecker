@@ -53,6 +53,7 @@ class RepairContext:
     # Notes for EvaluationResult.limitations (e.g. "LLM unavailable, used fallback").
     notes: list[str] = field(default_factory=list)
     llm_used: bool = False
+    content_refs: dict[str, str] = field(default_factory=dict)
 
     def note(self, text: str) -> None:
         if text not in self.notes:
@@ -105,7 +106,7 @@ def apply_repairs(issues: list[Issue], rctx: RepairContext) -> dict[tuple, Repai
 
 
 # Registered repairs (importing a module registers its @repairer functions).
-from remediation import lang, title  # noqa: E402,F401
+from remediation import lang, nontext, title  # noqa: E402,F401
 
 __all__ = ["REPAIRERS", "RepairAction", "RepairContext", "apply_repairs", "can_repair",
            "repairer"]
