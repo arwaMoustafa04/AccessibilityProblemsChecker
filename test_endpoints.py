@@ -32,6 +32,12 @@ def make_pdf(title: str | None = None, lang: str | None = None,
              user_password: str = "") -> bytes:
     pdf = pikepdf.new()
     pdf.add_blank_page()
+    # Valid upload fixtures need extractable text under spec 0.5.0.
+    page = pdf.pages[0]
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=pdf.make_indirect(
+        pikepdf.Dictionary(Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1,
+                           BaseFont=pikepdf.Name.Helvetica))))
+    page.Contents = pdf.make_stream(b"BT /F1 11 Tf 72 700 Td (1) Tj ET")
     if title:
         pdf.docinfo["/Title"] = title
     if lang:
@@ -272,7 +278,7 @@ def test_pdf_missing_title_and_language_is_repaired(repairs_on, post_pdf) -> Non
     assert body["output_pdf"]["modified"] is True
     assert hashlib.sha256(repaired).hexdigest() == body["output_pdf"]["sha256"]
     with pikepdf.open(io.BytesIO(repaired)) as pdf:
-        # A blank page has no heading to use, so the title comes from the file name, and
+        # A numeric-only page has no usable heading, so the title uses the file name, and
         # there is too little text to detect a language, so en-US is assumed (and noted).
         assert str(pdf.docinfo["/Title"]) == "Annual report"
         assert str(pdf.Root.Lang) == "en-US"

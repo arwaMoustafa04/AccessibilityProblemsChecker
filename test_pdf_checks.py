@@ -193,7 +193,7 @@ def test_incomplete_inspection_is_a_review_finding(kind):
         elif kind == "bad_resources":
             pdf.pages[0].Resources = 42
         else:
-            pdf.pages[0].Contents = pdf.make_stream(b"/Missing Do")
+            pdf.pages[0].contents_add(pdf.make_stream(b"/Missing Do"))
     case = "nested_form" if kind == "form_cycle" else "tagged_image"
     issues = inspect(case, change)
     assert any(i.issue_type in {"malformed_structure", "image_inspection_incomplete"}
@@ -278,7 +278,7 @@ def test_malformed_pdf_endpoint_remains_reviewable():
     with pikepdf.open(io.BytesIO(make_fixture("tagged_image"))) as pdf:
         doc = pdf.Root.StructTreeRoot.K[0]
         doc.K.append(doc)
-        pdf.pages[0].Contents = pdf.make_stream(b"/Missing Do")
+        pdf.pages[0].contents_add(pdf.make_stream(b"/Missing Do"))
         output = io.BytesIO()
         pdf.save(output)
     data = output.getvalue()

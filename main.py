@@ -1,4 +1,4 @@
-"""HTTP entry point for the PDF accessibility service (pod shared spec v0.4.0)."""
+"""HTTP entry point for the PDF accessibility service (pod shared spec v0.5.0)."""
 
 import logging
 import time
@@ -29,7 +29,7 @@ from pipeline import (
 )
 from sessions import SessionExists, UnknownSession, store
 
-SPEC_VERSION = "0.4.0"
+SPEC_VERSION = "0.5.0"
 
 # One line per event on stderr; on the server, systemd sends it to the journal
 # (read with: sudo journalctl -u pdf-system).
@@ -148,9 +148,11 @@ PROCESS_ERROR_RESPONSES: dict[int | str, dict] = {
                     ("file_too_large", "FILE_TOO_LARGE", "File exceeds the 20 MB project limit.")),
     415: _error_doc("File is not a PDF",
                     ("invalid_file_type", "INVALID_FILE_TYPE", "Input must be a PDF file.")),
-    422: _error_doc("PDF is corrupted, unreadable, encrypted or password-protected",
+    422: _error_doc("PDF is corrupted, unreadable, encrypted, password-protected or has no text layer",
                     ("corrupted", "CORRUPTED_PDF", "PDF is corrupted and cannot be processed."),
                     ("unreadable", "UNREADABLE_PDF", "PDF page tree cannot be read."),
+                    ("no_text_layer", "NO_TEXT_LAYER",
+                     "PDF has no extractable text layer. OCR is not supported."),
                     ("encrypted", "ENCRYPTED_PDF", "PDF is encrypted and cannot be processed."),
                     ("password_protected", "PASSWORD_PROTECTED_PDF",
                      "PDF is password-protected and cannot be opened.")),

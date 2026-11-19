@@ -203,6 +203,12 @@ def test_llm_enabled_false_wins(api, monkeypatch):
 def _pdf(title: str | None = None) -> bytes:
     pdf = pikepdf.new()
     pdf.add_blank_page()
+    # Valid upload fixtures need extractable text under spec 0.5.0.
+    page = pdf.pages[0]
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=pdf.make_indirect(
+        pikepdf.Dictionary(Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1,
+                           BaseFont=pikepdf.Name.Helvetica))))
+    page.Contents = pdf.make_stream(b"BT /F1 11 Tf 72 700 Td (Sample document text.) Tj ET")
     if title:
         pdf.docinfo["/Title"] = title
     buf = io.BytesIO()
