@@ -40,4 +40,11 @@ def check(ctx: CheckContext) -> list[Issue]:
                 suggestion="Give each meaningful image an alternative description, or mark "
                            "decorative images as artifacts.",
                 sources=["veraPDF"]))
+    for issue in issues:
+        issue.suggestion = (issue.suggestion or "") + (
+            " Describe the image's purpose in Figure alt text, or mark it as "
+            'an artifact only if it is decorative.'
+        )
+        issue.suggested_text = issue.suggestion
+        issue.suggestion_source = "rule"
     return issues

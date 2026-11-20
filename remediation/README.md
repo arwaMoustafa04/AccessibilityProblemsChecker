@@ -5,7 +5,7 @@ copy of the PDF, saves it, and runs **all checks again** on the result. You only
 the repair; re-validation, statuses, `repairs[]`, the report and the limitations are
 handled for you.
 
-## Adding a repair (Person 1: alt text; Person 2: link labels)
+## Adding a repair
 
 1. Create `remediation/<name>.py`:
 
@@ -68,3 +68,10 @@ your rule-based text). They never raise.
   functions return None. Ask for the most important items first (e.g. the first images).
 - For tests, put a fake module in `sys.modules["llm"]` (see `test_remediation.py`) or
   fake the HTTP call (see `test_llm.py`).
+
+
+`nontext.py` now registers image repairs for missing/generic Figure alternatives
+and untagged page images. It writes AI-labeled alt text, or isolates decorative
+content as an artifact, while retaining human-review status. The cap is
+`MAX_IMAGES_PER_PDF = 8`, with pixel/byte bounds before AI submission. Ambiguous
+associations and unsafe content scopes remain manual; see the root README.

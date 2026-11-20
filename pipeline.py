@@ -29,6 +29,7 @@ import zipfile
 from pathlib import PurePath
 
 import pikepdf
+import pymupdf
 
 from catalog import CHECKS_BY_ID
 from checks import CheckRun, run_checks
@@ -92,6 +93,16 @@ def validate_input(data: bytes) -> pikepdf.Pdf:
         pdf.close()
         raise PipelineError(422, "UNREADABLE_PDF",
                             "PDF page tree cannot be read.") from None
+    try:
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            has_text = any(page.get_text("text").strip() for page in doc)
+    except Exception:
+        pdf.close()
+        raise PipelineError(422, "UNREADABLE_PDF", "PDF text layer cannot be read.") from None
+    if not has_text:
+        pdf.close()
+        raise PipelineError(422, "NO_TEXT_LAYER",
+                            "PDF has no extractable text layer. OCR is not supported.")
     return pdf
 
 
@@ -103,6 +114,11 @@ def evaluate(data: bytes, file_name: str, pdf: pikepdf.Pdf) -> tuple[CheckRun, C
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")  # pikepdf XMP sync warnings on odd metadata
         run = run_checks(ctx)
+    # The shared 0.5.0 contract excludes text-based findings on scanned pages.
+    scanned = ctx.scanned_pages
+    run.issues = [i for i in run.issues if not (
+        i.page in scanned and (i.check_id in {"CHK-SENSORY", "CHK-COLOR", "CHK-LINK"}
+                               or (i.check_id == "CHK-HEADINGS" and i.issue_type == "headings_not_tagged")))]
     locator = Locator(ctx)
     for issue in run.issues:
         issue.bbox = locator.bbox(issue)
@@ -280,7 +296,7 @@ def _finding(fid: str, issue: Issue, status: FindingStatus,
              action: RepairAction | None = None) -> Finding:
     check = CHECKS_BY_ID[issue.check_id]
     suggested, source = issue.suggested_text, issue.suggestion_source
-    if suggested is None and action is not None and action.applied_text:
+    if action is not None and action.applied_text:
         suggested, source = action.applied_text, action.method  # what the repair wrote
     if suggested is not None and source is None:
         source = "rule"
@@ -307,6 +323,10 @@ def _finding(fid: str, issue: Issue, status: FindingStatus,
 def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool,
                  repair_notes: list[str] | None = None, unrepaired_fixable: int = 0) -> list[str]:
     notes = []
+    if ctx.scanned_pages:
+        notes.append("Pages " + ", ".join(map(str, sorted(ctx.scanned_pages)))
+                     + " are scanned (no text layer); OCR is not supported, so text-based "
+                       "checks did not run on them. Image and structure checks still ran.")
     if run.not_implemented:
         notes.append("Checks " + ", ".join(run.not_implemented)
                      + " are not implemented yet and were not performed.")
@@ -320,7 +340,8 @@ def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool,
                      "findings are reported as detected and the PDF is returned unchanged.")
     else:
         notes.append("Automatic repair covers CHK-TITLE (title, XMP title, DisplayDocTitle) "
-                     "and CHK-LANG (document and passage language). Repairs are made on a "
+                     "and CHK-LANG (document and passage language), plus AI-drafted Figure alt text "
+                     "and decorative-image artifacts for CHK-NONTEXT. Repairs are made on a "
                      "copy and re-validated by running every check again.")
         if unrepaired_fixable:
             notes.append(f"{unrepaired_fixable} auto-fixable finding(s) have no automatic "
@@ -379,9 +400,10 @@ def object_number_map(before: pikepdf.Pdf, after: pikepdf.Pdf) -> dict[tuple[int
     return mapping
 
 
-def _translated_key(issue: Issue, mapping: dict[tuple[int, int], tuple[int, int]]) -> tuple:
+def _translated_key(issue: Issue, mapping: dict[tuple[int, int], tuple[int, int]],
+                    content_refs: dict[str, str] | None = None) -> tuple:
     """Issue.key with object numbers rewritten to the repaired file's numbering."""
-    ref = issue.object_ref
+    ref = (content_refs or {}).get(issue.object_ref or "", issue.object_ref)
     if ref and mapping:
         def swap(m: re.Match) -> str:
             new = mapping.get((int(m[1]), int(m[2])))
@@ -395,7 +417,7 @@ def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: C
     """Phase 5: apply the registered repairs, then re-run every check on the result."""
     actions, rctx = repair(pdf, run.issues, ctx, file_name)
     if not actions:
-        return data, actions, run.issues, rctx.notes, {}
+        return data, actions, run.issues, rctx.notes, {}, {}
     # The repaired PDF must save, reopen and pass through every check again. If any of
     # that fails, the repairs are discarded and the original PDF is returned.
     try:
@@ -405,6 +427,8 @@ def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: C
         with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
             after, after_ctx = evaluate(repaired_bytes, file_name, repaired)
             try:
+                if after.failed:
+                    raise ValueError("Re-validation did not complete every check")
                 new_rules = new_verapdf_failures(ctx, after_ctx)
                 mapping = object_number_map(pdf, repaired)
             finally:
@@ -413,11 +437,11 @@ def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: C
         log.exception("repaired PDF failed re-validation; returning the original")
         return data, {}, run.issues, rctx.notes + [
             f"Automatic repairs were discarded: the repaired PDF could not be re-validated "
-            f"({type(exc).__name__}), so the original PDF is returned unchanged."], {}
+            f"({type(exc).__name__}), so the original PDF is returned unchanged."], {}, {}
     if new_rules:
         rctx.note("veraPDF reports PDF/UA-1 rules failing after repair that did not fail "
                   f"before: {', '.join(new_rules)}. Review the repaired PDF.")
-    return repaired_bytes, actions, after.issues, rctx.notes, mapping
+    return repaired_bytes, actions, after.issues, rctx.notes, mapping, rctx.content_refs
 
 
 def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
@@ -428,9 +452,10 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         try:
             repair_notes: list[str] = []
             mapping: dict[tuple[int, int], tuple[int, int]] = {}
+            content_refs: dict[str, str] = {}
             if ENABLE_REPAIRS:
-                output_bytes, actions, remaining, repair_notes, mapping = _repair_and_revalidate(
-                    pdf, data, file_name, run, ctx)
+                repaired_result = _repair_and_revalidate(pdf, data, file_name, run, ctx)
+                output_bytes, actions, remaining, repair_notes, mapping, content_refs = repaired_result
             else:
                 output_bytes, actions, remaining = data, {}, run.issues
             unrepaired = sum(1 for i in run.issues
@@ -447,7 +472,7 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     # are told apart (Issue.key).
     # Object numbers change when the repaired PDF is saved; compare in its numbering.
     remaining_keys = {i.key for i in remaining}
-    original_keys = {_translated_key(i, mapping) for i in run.issues}
+    original_keys = {_translated_key(i, mapping, content_refs) for i in run.issues}
     findings: list[Finding] = []
     repairs: list[Repair] = []
     for n, issue in enumerate(run.issues, start=1):
@@ -455,7 +480,7 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         status = _status(issue)
         action = actions.get(issue.key)
         if action is not None:
-            fixed = _translated_key(issue, mapping) not in remaining_keys
+            fixed = _translated_key(issue, mapping, content_refs) not in remaining_keys
             if status == "detected":  # auto_fixable: the repair decides the status
                 status = "fixed" if fixed else "repair_failed"
             # human_review stays needs_human_review: a person must verify it (spec v0.5.0)

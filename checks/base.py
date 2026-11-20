@@ -62,6 +62,17 @@ class CheckContext:
         return pymupdf.open(stream=self.data, filetype="pdf")
 
     @cached_property
+    def text_pages(self) -> set[int]:
+        """Invisible OCR text counts; whitespace alone does not."""
+        return {n + 1 for n in range(len(self.doc)) if self.doc[n].get_text("text").strip()}
+
+    @cached_property
+    def scanned_pages(self) -> set[int]:
+        # get_image_info sees drawn inline and nested images, not unused resources.
+        return {n + 1 for n in range(len(self.doc))
+                if n + 1 not in self.text_pages and self.doc[n].get_image_info()}
+
+    @cached_property
     def verapdf(self) -> VeraReport:
         from checks.verapdf import run_verapdf
         return run_verapdf(self.data)

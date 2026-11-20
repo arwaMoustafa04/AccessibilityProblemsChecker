@@ -38,6 +38,12 @@ def clean_pdf(title: str = "Annual Budget 2026", lang: str = "en-US") -> bytes:
     """Title in Info and XMP, DisplayDocTitle, language: no title/lang/heading issues."""
     pdf = pikepdf.new()
     pdf.add_blank_page()
+    # Valid upload fixtures need extractable text under spec 0.5.0.
+    page = pdf.pages[0]
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=pdf.make_indirect(
+        pikepdf.Dictionary(Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1,
+                           BaseFont=pikepdf.Name.Helvetica))))
+    page.Contents = pdf.make_stream(b"BT /F1 11 Tf 72 700 Td (Sample document text.) Tj ET")
     _set_title(pdf, title)
     pdf.Root.ViewerPreferences = pikepdf.Dictionary(DisplayDocTitle=True)
     pdf.Root.Lang = pikepdf.String(lang)

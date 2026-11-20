@@ -162,7 +162,7 @@ def test_good_title_is_copied_to_xmp_not_replaced():
 def test_title_falls_back_to_file_name():
     assert title_from_file_name("annual_report-2026.pdf") == "Annual report 2026"
     assert title_from_file_name(".pdf") == "Document"
-    result = run(text_pdf([]), "annual_report.pdf")  # no text: no heading to use
+    result = run(text_pdf([("1", 11)]), "annual_report.pdf")  # text exists, but no usable heading
     with output(result) as pdf:
         assert str(pdf.docinfo["/Title"]) == "Annual report"
 

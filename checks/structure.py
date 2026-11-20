@@ -54,4 +54,29 @@ def check(ctx: CheckContext) -> list[Issue]:
                 suggestion="Review the document tags: tag real content in reading order, mark "
                            "decorative content as artifacts, and give tables header cells.",
                 sources=["veraPDF"]))
+    suggestions = {
+        "missing_document_structure": (
+            'Add document tags in logical reading order, including headings, '
+            'paragraphs and tables.'
+        ),
+        "document_not_marked": "Verify the existing tags, then set MarkInfo/Marked to true.",
+        "malformed_structure": "Repair broken parent/child tag relationships and verify the reading order.",
+        "table_missing_headers": (
+            'If the first row contains column labels, mark its cells as TH '
+            'header cells and set Scope to Column; verify row headers '
+            'separately.'
+        ),
+        "table_pdfua_rule_failed": (
+            'Review table tags: use Table, TR, TH and TD, and associate data '
+            'cells with the correct headers.'
+        ),
+    }
+    for issue in issues:
+        issue.suggested_text = suggestions.get(issue.issue_type,
+            (
+                'Review the document tags and reading order; tag meaningful '
+                'content and mark decorative content as artifacts.'
+            ))
+        issue.suggestion = (issue.suggestion or "") + " " + issue.suggested_text
+        issue.suggestion_source = "rule"
     return issues

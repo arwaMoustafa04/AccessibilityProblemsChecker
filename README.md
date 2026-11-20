@@ -23,7 +23,7 @@ color and link rules.
 | System interactive docs | http://3.15.117.84/system/docs |
 | Tester base URL | http://3.15.117.84/tester |
 | Tester interactive docs | http://3.15.117.84/tester/docs |
-| Pod specification (system contract) | [`openapi.yaml`](openapi.yaml), shared spec v0.4.0, agreed with Team 3 |
+| Pod specification (system contract) | [`openapi.yaml`](openapi.yaml), shared spec v0.5.0, agreed with Team 3 |
 | Tester contract | [`tester/openapi.yaml`](tester/openapi.yaml) |
 
 Opening the system base URL in a browser shows the web UI; the tester base URL opens
@@ -56,14 +56,14 @@ The Phase 3 versions of these models (validation only) are kept as `model.png` a
 
 ## System interface
 
-The contract is `openapi.yaml` (OpenAPI 3.0.3, spec v0.4.0). Both pod teams build to
+The contract is `openapi.yaml` (OpenAPI 3.0.3, spec v0.5.0). Both pod teams build to
 it, so if it changes, update it here, bump the version and send it to Team 3.
 
 Project API:
 
 | Endpoint | What it does |
 |---|---|
-| `GET /health` | `{"status": "ok", "spec_version": "0.4.0"}` |
+| `GET /health` | `{"status": "ok", "spec_version": "0.5.0"}` |
 | `GET /checks` | `{"checks": [...]}`, the 8 agreed checks (`check_id`, `name`, `wcag_criterion`, `wcag_level`, `classification`) |
 | `POST /process` | Multipart upload: field `file` (the PDF), optional `session_id`, optional `output` (`json`, the default, or `zip`). Returns an `EvaluationResult` with findings (each with an optional `location.bbox`), the output PDF and a report PDF in Base64; with `output=zip`, one zip with `original.pdf`, the output PDF, the report PDF and `result.json` |
 
@@ -90,7 +90,7 @@ Course test endpoints:
   viewer can highlight the finding; `checks/locate.py` fills it where the position is known.
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
   `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `CORRUPTED_PDF`, `UNREADABLE_PDF`,
-  `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `INVALID_REQUEST` (an `output` value other than
+  `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `NO_TEXT_LAYER`, `INVALID_REQUEST` (an `output` value other than
   `json` or `zip`), `PROCESSING_ERROR`, `EXTERNAL_SERVICE_UNAVAILABLE`.
 - **SessionRef / SystemReport / TestError**: the course test-interface bodies.
 
@@ -114,7 +114,7 @@ upload (see [`checks/README.md`](checks/README.md)); the image and structure che
   Missing/empty structure is `fail`; marker, relationship and header concerns are
   `needs_review`. Nested tables are inspected separately.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
-  and finding IDs in `human_review_items`. They never trigger repairs.
+  and finding IDs in `human_review_items`. CHK-STRUCTURE provides rule-based suggestions only. CHK-NONTEXT can write AI-drafted alt text or mark an image as an artifact; its findings remain unresolved for human review.
 - CHK-TITLE and CHK-LANG findings are `auto_fixable` and are repaired automatically
   (next section); they become `fixed` or `repair_failed`. With `ENABLE_REPAIRS=false`
   they are reported as `detected` and the original PDF is returned byte-for-byte
@@ -141,7 +141,7 @@ before/after findings are matched by walking both files side by side
 
 - **auto_fixable** findings become `fixed` or `repair_failed`. **human_review** findings
   are never resolved automatically: a repair can be recorded for them (for example
-  AI-drafted alt text, once added), but they stay `needs_human_review` (spec v0.5.0).
+  AI-drafted alt text), but they stay `needs_human_review` (spec v0.5.0).
 - **AI text** (`method: "llm"`) is labeled "AI-generated, please verify" in the
   repairs and the report PDF, and `limitations` says the text was sent to an external
   model provider. If the LLM is missing, slow or fails, the rule-based fallback is used
@@ -163,7 +163,7 @@ before/after findings are matched by walking both files side by side
 Every LLM call goes through `llm.py` (via `remediation/ai.py`), using an
 OpenAI-compatible API: by default OpenRouter's free `google/gemma-4-26b-a4b:free`,
 falling back to `nvidia/nemotron-3.5-super-vl:free`. Functions: `suggest_title`
-(used now), `describe_image`, `suggest_link_text` and `rewrite_sentence` (ready for
+(used now), `describe_image` (used for image repairs), `suggest_link_text` and `rewrite_sentence` (ready for
 the CHK-NONTEXT, CHK-LINK, CHK-COLOR and CHK-SENSORY repairs and suggestions).
 
 - **No key, no AI:** without `LLM_API_KEY` every call returns nothing and the
@@ -256,13 +256,13 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
 - CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
   targets; these heuristics can miss issues or flag acceptable content.
-- **Repairs cover CHK-TITLE and CHK-LANG only** (Phase 5 in progress). A rule-based
+- **Repairs cover CHK-TITLE, CHK-LANG and bounded CHK-NONTEXT image repairs** (Phase 5 in progress). A rule-based
   title is only as good as page 1's largest heading or the file name, and a language
   detected from very little text is assumed (`en-US`) and flagged for review. An
   auto-fixable finding with no repair (e.g. veraPDF's `text_language_not_determinable`)
   stays `detected`.
-- **Scanned or image-only PDFs** are not really evaluated: there is no OCR, so the
-  text-based checks find nothing on pages without a text layer.
+- **Textless PDFs**, including blank files, return 422 `NO_TEXT_LAYER`. Mixed PDFs
+  are accepted with scanned pages listed in limitations. OCR is out of scope.
 - **Speed:** veraPDF adds about 2-4 s per `/process` call, and processing time grows
   with page count (about 4 ms per page). Very long documents (several thousand pages)
   approach the tester's 60 s per-call limit.
@@ -351,3 +351,42 @@ optional (`SKIP_VERAPDF=1`, `SKIP_UI=1`); if one fails, the API and tester still
 Logs: `sudo journalctl -u pdf-system -u pdf-tester`.
 
 Lambda/API Gateway is not used: its payload limits (6 MB / 10 MB) are below 20 MB.
+
+
+### Person 2: images, structure and scanned PDFs (Phase 5)
+
+- `remediation/nontext.py` extracts drawn images associated with missing/generic Figure
+  alternatives, or untagged page images, and calls the existing `ai.describe_image`
+  adapter. Existing meaningful alternatives and artifacts are preserved. It supports
+  inline images and existing Figure tags in nested Forms, using the detector's actual
+  MCID/OBJR mapping rather than image ordering.
+- AI descriptions are written to `/Alt` with `[AI-generated, please verify]`.
+  Untagged page images get Figure/MCID/ParentTree entries. An AI `DECORATIVE` decision
+  converts an isolated image-only scope to `/Artifact`; visible content is preserved.
+  Results include `method: llm`, the applied text, and re-validation results. Every
+  image finding stays `needs_human_review`, including decorative decisions.
+- At most **8 images per PDF** are attempted, additionally subject to the shared LLM
+  call/time budget. Images over **16 million pixels** are skipped; model input is
+  resized to at most **1600 × 1600** and **4 MB**. AI unavailability, limits, unsupported
+  masks, ambiguous multi-image Figures, and unsafe tagging scopes are reported in
+  `limitations`. Unassociated images inside Forms and complex decorative scopes need
+  manual tag editing. The system never claims those cases were repaired.
+- `CHK-STRUCTURE` supplies fixed `suggested_text` with `suggestion_source: rule`,
+  including checking whether the first row should be marked as column-header cells.
+  It does not invent table semantics or change table tags automatically.
+- No extractable non-whitespace text anywhere → **422 `NO_TEXT_LAYER`**. An already
+  OCR-processed PDF is accepted. In a mixed document, pages with drawn images and no
+  text are listed by number; blank pages are not labeled scanned. Sensory, color,
+  link and untagged-heading findings are excluded on scanned pages as specified in
+  `openapi.yaml`. Corruption/encryption/password/size errors retain precedence.
+- The existing UI receives suggestions, repairs, AI labels and limitations through
+  its current response fields. When configured, image bytes and nearby page text go
+  to the existing LLM provider; the result discloses this. No new provider/key is
+  introduced. `ENABLE_REPAIRS=false` disables image modifications too.
+
+Verification: `python -m pytest test_phase5_images.py` generates scanned, mixed,
+OCR, tagged, inline and repeated-image cases in memory. It checks saved tags and
+parent entries, byte preservation when repairs are off, identical rendered pages,
+human-review statuses, fallback behavior, image caps, API version and error schemas.
+AI responses are mocked in these tests; they do not validate a live model's semantic
+accuracy. Run `python -m pytest` for the full regression suite.
