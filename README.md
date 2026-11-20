@@ -161,7 +161,7 @@ before/after findings are matched by walking both files side by side
 ### AI suggestions (`llm.py`)
 
 Every LLM call goes through `llm.py` (via `remediation/ai.py`), using an
-OpenAI-compatible API: by default OpenRouter's free `google/gemma-4-26b-a4b:free`,
+OpenAI-compatible API: by default OpenRouter's free `google/gemma-4-26b-a4b-it:free`,
 falling back to `nvidia/nemotron-3.5-super-vl:free`. Functions: `suggest_title`
 (used now), `describe_image` (used for image repairs), `suggest_link_text` and `rewrite_sentence` (ready for
 the CHK-NONTEXT, CHK-LINK, CHK-COLOR and CHK-SENSORY repairs and suggestions).

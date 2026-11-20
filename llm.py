@@ -11,10 +11,11 @@ Configuration (environment variables; only LLM_API_KEY is required):
   LLM_API_KEY             API key. Never commit it: on EC2 it goes in
                           /etc/pdf-system.env (deploy/setup.sh), in CI in GitHub Secrets.
   LLM_BASE_URL            OpenAI-compatible API, default https://openrouter.ai/api/v1
-  LLM_MODEL_TEXT          default google/gemma-4-26b-a4b:free
-  LLM_MODEL_VISION        default google/gemma-4-26b-a4b:free (must accept images)
+  LLM_MODEL_TEXT          default google/gemma-4-26b-a4b-it:free
+  LLM_MODEL_VISION        default google/gemma-4-26b-a4b-it:free (must accept images)
   LLM_FALLBACK_MODELS     comma-separated, tried in order when the main model fails,
-                          default nvidia/nemotron-3.5-super-vl:free
+                          default nvidia/nemotron-3.5-super-vl:free (its free endpoint
+                          only serves requests with LLM_DATA_COLLECTION=allow)
   LLM_DATA_COLLECTION     OpenRouter only: "deny" (default) routes only to providers
                           that do not collect prompts; "allow" permits any provider.
   LLM_TIMEOUT_SECONDS     per HTTP call, default 15
@@ -53,7 +54,7 @@ from pathlib import Path
 log = logging.getLogger("pdf_accessibility.llm")
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "google/gemma-4-26b-a4b:free"
+DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free"
 DEFAULT_FALLBACKS = "nvidia/nemotron-3.5-super-vl:free"
 RETRY_STATUSES = {408, 429, 500, 502, 503, 504}
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -227,6 +228,9 @@ def _post(model: str, messages: list[dict], max_tokens: int, timeout: float) -> 
                                "max_tokens": max_tokens, "temperature": 0.2}
     if "openrouter.ai" in base:
         body["provider"] = {"data_collection": _env("LLM_DATA_COLLECTION", "deny")}
+        # Reasoning models (e.g. the Nemotron fallback) otherwise spend the small
+        # max_tokens on hidden reasoning and return an empty answer.
+        body["reasoning"] = {"enabled": False}
     request = urllib.request.Request(
         f"{base}/chat/completions", data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": f"Bearer {_env('LLM_API_KEY', '')}",

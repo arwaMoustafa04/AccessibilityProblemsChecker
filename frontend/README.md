@@ -1,8 +1,8 @@
-# Frontend (Phase 4 UI)
+# Frontend (Phase 5 UI)
 
 React + Vite UI for the PDF Accessibility Checker. **Analyze PDF** sends the file
 to `POST /process` (`openapi.yaml`). A rejected file (missing, not a PDF, too large,
-corrupted, encrypted, password-protected) returns to the upload screen with the
+corrupted, encrypted, password-protected, or with no text layer, i.e. a scanned PDF: `NO_TEXT_LAYER`) returns to the upload screen with the
 API's error; an accepted file shows the results the API returned.
 
 ```bash
@@ -35,10 +35,17 @@ many findings each check produced; a check the API did not run is shown as "not
 performed" and listed under Limitations. The results screen can
 download the report PDF and the output PDF that `/process` returns.
 
+Phase 5 additions: if the API lists scanned pages in `limitations`, the results screen
+shows a "Pages … are scanned" notice and tags findings on those pages **Scanned page**.
+AI image repairs (CHK-NONTEXT) show the alt text written to the PDF ("Alt text written to
+PDF", with the "AI-generated, please verify" badge), or "AI-suggested alt text (not
+applied)" when it could not be written. Rule-based guidance that repeats the suggested
+fix (CHK-NONTEXT, CHK-STRUCTURE) is shown once.
+
 ## Screens
 
 1. **Upload**: drag-and-drop or file picker, file name and size, error message area, Analyze PDF button.
-2. **Processing**: "Analyzing PDF…" with the steps Validating → Checking accessibility → Classifying findings.
+2. **Processing**: "Analyzing PDF…" with the steps Validating → Checking accessibility → Repairing a copy → Re-checking.
 3. **Results**: summary counts, finding cards (issue, result, location, PDF object, status), checks performed (with checks that did not run marked), limitations, the compliance disclaimer, the downloads, and Analyze Another PDF.
 4. **PDF viewer** (side panel): click a finding (or its **Show in PDF** button) to see the
    uploaded PDF at that finding's page, with its position highlighted when the API gives
