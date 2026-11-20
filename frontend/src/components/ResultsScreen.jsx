@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { downloadPdf, downloadResultsZip } from '../api.js'
 import { CHECKS } from '../data/checks.js'
-import { formatBytes } from '../format.js'
+import { formatBytes, scannedPages } from '../format.js'
 import { openPdf } from '../pdf.js'
 import FindingCard from './FindingCard.jsx'
 import PdfViewer from './PdfViewer.jsx'
@@ -47,6 +47,8 @@ export default function ResultsScreen({ result, file, onRestart }) {
   const humanReview = findings.filter((f) => f.classification === 'human_review').length
   const repairs = result.repairs ?? []
   const repairByFinding = Object.fromEntries(repairs.map((r) => [r.finding_id, r]))
+  const scanned = scannedPages(limitations)
+  const scannedSet = new Set(scanned)
 
   return (
     <div className="results">
@@ -65,6 +67,19 @@ export default function ResultsScreen({ result, file, onRestart }) {
             : <Stat label="Auto-fixable" value={autoFixable} tone="fixable" />}
           <Stat label="Human review" value={humanReview} tone="review" />
         </dl>
+
+        {scanned.length > 0 && (
+          <div className="alert alert-warning" role="note">
+            <p className="alert-title">
+              {scanned.length === 1 ? `Page ${scanned[0]} is` : `Pages ${scanned.join(', ')} are`} scanned
+            </p>
+            <p>
+              {scanned.length === 1 ? 'This page has' : 'These pages have'} no text layer, and OCR is not
+              supported, so text-based checks (sensory, color, links, untagged headings) did not run there.
+              Image and structure checks still ran. Run OCR on the PDF and analyze it again for a full check.
+            </p>
+          </div>
+        )}
 
         {checks_performed.length === 0 && (
           <div className="alert alert-warning" role="note">
@@ -92,6 +107,7 @@ export default function ResultsScreen({ result, file, onRestart }) {
                 key={f.finding_id}
                 finding={f}
                 repair={repairByFinding[f.finding_id]}
+                scanned={scannedSet.has(f.location.page)}
                 selected={f.finding_id === selectedId}
                 onSelect={() => setSelectedId(f.finding_id)}
               />

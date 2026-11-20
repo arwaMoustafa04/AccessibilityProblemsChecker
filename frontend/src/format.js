@@ -36,6 +36,16 @@ export const splitSuggestion = (text) => {
   return { details: text.slice(0, at), suggestion: text.slice(at + marker.length) }
 }
 
+// The API lists scanned pages (no text layer) in one limitation, e.g.
+// "Pages 2, 5 are scanned (no text layer); ...". Returns those page numbers.
+export const scannedPages = (limitations) => {
+  for (const note of limitations ?? []) {
+    const m = /^Pages? ([\d, ]+) (?:is|are) scanned/.exec(note)
+    if (m) return m[1].split(',').map((n) => Number(n.trim())).filter(Boolean)
+  }
+  return []
+}
+
 // The API's issue_type is snake_case (e.g. "title_missing"); show it as words.
 export const issueLabel = (issueType) => {
   const words = issueType.replace(/_/g, ' ')

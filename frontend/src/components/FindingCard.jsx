@@ -4,7 +4,7 @@ import {
 } from '../format.js'
 
 // Clicking anywhere on the card (or its "Show in PDF" button) selects it for the viewer.
-export default function FindingCard({ finding, repair, selected, onSelect }) {
+export default function FindingCard({ finding, repair, scanned = false, selected, onSelect }) {
   const check = CHECKS_BY_ID[finding.check_id]
   const humanReview = finding.classification === 'human_review'
   const { page, object_ref, description } = finding.location
@@ -12,6 +12,21 @@ export default function FindingCard({ finding, repair, selected, onSelect }) {
     ? `Page ${page} — ${description}`
     : description
   const { details, suggestion } = splitSuggestion(finding.fix_description)
+  // Phase 5: rule-based guidance (CHK-NONTEXT, CHK-STRUCTURE) is repeated in suggested_text;
+  // only show it separately when it adds something the Suggested fix does not say.
+  const suggestedText = finding.suggested_text
+  const showSuggestedText = suggestedText && !(
+    finding.suggestion_source !== 'llm' && suggestion?.includes(suggestedText.trim()))
+  const written = repair?.applied_text != null
+  // CHK-NONTEXT: the AI answered "DECORATIVE", so the image was marked as an artifact.
+  const decorative = finding.check_id === 'CHK-NONTEXT' && suggestedText?.trim() === 'DECORATIVE'
+  const suggestedLabel = decorative
+    ? (written ? 'Image marked as decorative' : 'AI judged the image decorative (not applied)')
+    : written
+    ? (finding.check_id === 'CHK-NONTEXT' ? 'Alt text written to PDF' : 'Text written to PDF')
+    : finding.suggestion_source === 'llm'
+      ? (finding.check_id === 'CHK-NONTEXT' ? 'AI-suggested alt text (not applied)' : 'AI suggestion (not applied)')
+      : 'Suggested text'
 
   return (
     <article
@@ -27,6 +42,7 @@ export default function FindingCard({ finding, repair, selected, onSelect }) {
             <span aria-hidden="true">{humanReview ? '⚠' : '✓'}</span>{' '}
             {label(CLASSIFICATION_LABELS, finding.classification)}
           </span>
+          {scanned && <span className="pill pill-scanned" title="This page has no text layer">Scanned page</span>}
           {/* No handler of its own: the click reaches the card's onClick. */}
           <button type="button" className="link-button" data-show-finding={finding.finding_id}
             aria-pressed={selected}>
@@ -55,11 +71,13 @@ export default function FindingCard({ finding, repair, selected, onSelect }) {
         {suggestion && (
           <div className="full"><dt>Suggested fix</dt><dd>{suggestion}</dd></div>
         )}
-        {finding.suggested_text && (
+        {showSuggestedText && (
           <div className="full">
-            <dt>Suggested text</dt>
+            <dt>{suggestedLabel}</dt>
             <dd>
-              <q>{finding.suggested_text}</q>
+              {decorative
+                ? <span>Decorative, so screen readers skip it (tagged as an Artifact, no alt text)</span>
+                : <q>{suggestedText}</q>}
               {finding.suggestion_source === 'llm' && <AiBadge />}
             </dd>
           </div>

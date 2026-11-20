@@ -149,6 +149,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .pill { white-space: nowrap; font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.6rem; border-radius: 999px; }
 .pill-fixable { background: var(--fixable-bg); color: var(--fixable); }
 .pill-review { background: var(--review-bg); color: var(--review); }
+.pill-scanned { background: var(--border); color: var(--muted); }
 .finding-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem 1.5rem; margin: 0; }
 .finding-fields .full { grid-column: 1 / -1; }
 .finding-fields dt { font-size: 0.8rem; color: var(--muted); font-weight: 600; }

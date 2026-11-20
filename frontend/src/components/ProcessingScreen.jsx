@@ -1,4 +1,4 @@
-const STEPS = ['Validating', 'Checking accessibility', 'Classifying findings']
+const STEPS = ['Validating', 'Checking accessibility', 'Repairing a copy', 'Re-checking']
 
 export default function ProcessingScreen({ fileName }) {
   return (
