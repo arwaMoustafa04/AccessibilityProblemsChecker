@@ -7,7 +7,9 @@
 # Result:
 #     http://<server-ip>/system  -> the system  (uvicorn main:app, port 8001)
 #     http://<server-ip>/tester  -> the tester  (uvicorn app:app,  port 8002)
-# Both start automatically on boot and restart if they crash.
+#     http://<server-ip>/        -> the web UI  (frontend/, built and served by nginx)
+#     http://<server-ip>/system  -> also opens the web UI (at /system/ui/); API docs at /system/docs
+# The services start automatically on boot and restart if they crash.
 # Re-run this script after you update the code to reinstall and restart.
 
 set -euo pipefail
@@ -16,14 +18,75 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_USER="$(id -un)"
 VENV="$APP_DIR/.venv"
 
-echo "==> Installing system packages (python, nginx)"
+echo "==> Installing system packages (python, nginx, curl)"
 sudo apt-get update -y
-sudo apt-get install -y python3 python3-venv python3-pip nginx
+sudo apt-get install -y python3 python3-venv python3-pip nginx curl
 
 echo "==> Creating Python environment in $VENV"
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install --upgrade pip
 "$VENV/bin/pip" install -r "$APP_DIR/requirements.txt" -r "$APP_DIR/tester/requirements.txt"
+
+# veraPDF (PDF/UA-1 validator, used by the checks). Optional: if this step fails,
+# the service still works and each response says veraPDF was not used.
+# Skip it with:  SKIP_VERAPDF=1 bash deploy/setup.sh
+VERAPDF_DIR=/opt/verapdf
+if [ "${SKIP_VERAPDF:-0}" != "1" ] && [ ! -x "$VERAPDF_DIR/verapdf" ]; then
+    echo "==> Installing Java and veraPDF into $VERAPDF_DIR"
+    if sudo apt-get install -y openjdk-17-jre-headless unzip \
+        && TMP="$(mktemp -d)" \
+        && curl -fsSL -o "$TMP/verapdf.zip" https://software.verapdf.org/rel/verapdf-installer.zip \
+        && unzip -q "$TMP/verapdf.zip" -d "$TMP" \
+        && sudo "$(ls -d "$TMP"/verapdf-greenfield-*)/verapdf-install" "$APP_DIR/deploy/verapdf-auto-install.xml"; then
+        echo "veraPDF installed: $("$VERAPDF_DIR/verapdf" --version 2>/dev/null | head -1)"
+    else
+        echo "WARNING: veraPDF could not be installed; checks will run without it."
+    fi
+fi
+# Web UI (frontend/): built with Node and served by nginx at http://<server-ip>/.
+# It calls the API at /system on the same server, so no CORS setup is needed.
+# Optional: if this step fails, the API and tester still deploy.
+# Skip it with:  SKIP_UI=1 bash deploy/setup.sh
+UI_DIR=/var/www/pdf-ui
+if [ "${SKIP_UI:-0}" != "1" ]; then
+    echo "==> Building the web UI into $UI_DIR"
+    if ! command -v npm > /dev/null || [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -lt 18 ]; then
+        sudo apt-get install -y nodejs npm
+    fi
+    if (cd "$APP_DIR/frontend" && npm ci --no-audit --no-fund && VITE_API_URL=/system npm run build) \
+        && sudo rm -rf "$UI_DIR" && sudo mkdir -p "$UI_DIR" \
+        && sudo cp -r "$APP_DIR/frontend/dist/." "$UI_DIR/"; then
+        echo "Web UI built."
+    else
+        echo "WARNING: the web UI could not be built; the API and tester still work."
+    fi
+fi
+
+VERAPDF_ENV=""
+if [ -x "$VERAPDF_DIR/verapdf" ]; then
+    VERAPDF_ENV="Environment=VERAPDF_PATH=$VERAPDF_DIR/verapdf"
+fi
+
+# LLM settings (Phase 5). The API key lives only in this root-only file on the server,
+# never in the repository. Created once with everything commented out (no key = the
+# service uses its rule-based fallbacks); edit it, then: sudo systemctl restart pdf-system
+LLM_ENV_FILE=/etc/pdf-system.env
+if [ ! -f "$LLM_ENV_FILE" ]; then
+    echo "==> Creating $LLM_ENV_FILE (add LLM_API_KEY there to enable AI suggestions)"
+    sudo tee "$LLM_ENV_FILE" > /dev/null <<'ENVEOF'
+# AI suggestions for the PDF accessibility system (see llm.py for every option).
+# LLM_API_KEY=sk-or-...
+# LLM_MODEL_TEXT=google/gemma-4-26b-a4b:free
+# LLM_MODEL_VISION=google/gemma-4-26b-a4b:free
+# LLM_FALLBACK_MODELS=nvidia/nemotron-3.5-super-vl:free
+# LLM_DATA_COLLECTION=deny
+# LLM_MAX_PER_DAY=50
+# LLM_ENABLED=true
+ENVEOF
+    sudo chmod 600 "$LLM_ENV_FILE"
+fi
+sudo mkdir -p /var/cache/pdf-system
+sudo chown "$APP_USER" /var/cache/pdf-system
 
 echo "==> Creating services"
 sudo tee /etc/systemd/system/pdf-system.service > /dev/null <<EOF
@@ -34,6 +97,9 @@ After=network.target
 [Service]
 User=$APP_USER
 WorkingDirectory=$APP_DIR
+$VERAPDF_ENV
+EnvironmentFile=-$LLM_ENV_FILE
+Environment=LLM_CACHE_DIR=/var/cache/pdf-system
 ExecStart=$VENV/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --root-path /system --no-access-log
 Restart=always
 
@@ -56,15 +122,15 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-echo "==> Configuring nginx (/system and /tester)"
+echo "==> Configuring nginx (/system, /tester and the web UI at /)"
 sudo tee /etc/nginx/sites-available/pdf-accessibility > /dev/null <<'EOF'
 server {
     listen 80 default_server;
     server_name _;
 
-    client_max_body_size 25m;     # 20 MB PDFs plus form overhead
-    proxy_read_timeout 900s;      # a full tester run can take minutes
-    proxy_send_timeout 900s;
+    client_max_body_size 100m;    # larger than 20 MB, so the app (not nginx) returns the JSON 413
+    proxy_read_timeout 1800s;     # worst-case tester run: 25 calls x 60 s + report
+    proxy_send_timeout 1800s;
 
     location /system/ {
         proxy_pass http://127.0.0.1:8001/;
@@ -76,8 +142,27 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
-    location = /system { return 301 /system/; }
     location = /tester { return 301 /tester/; }
+
+    # Opening the bare /system address in a browser shows the web UI. Testers and
+    # graders only call paths below it (/system/health, /system/process, ...),
+    # which still go to the API above. API docs stay at /system/docs.
+    location = /system    { return 302 /system/ui/; }
+    location = /system/   { return 302 /system/ui/; }
+    location = /system/ui { return 301 /system/ui/; }
+    location ^~ /system/ui/ {
+        alias /var/www/pdf-ui/;
+        index index.html;
+    }
+
+    # Web UI: everything that is not /system or /tester.
+    root /var/www/pdf-ui;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+    location /assets/ {
+        expires 7d;   # built file names change on every build, so caching is safe
+    }
 }
 EOF
 sudo ln -sf /etc/nginx/sites-available/pdf-accessibility /etc/nginx/sites-enabled/pdf-accessibility
@@ -93,11 +178,14 @@ sleep 3
 echo "==> Checking"
 curl -fsS http://127.0.0.1/system/health && echo
 curl -fsS -o /dev/null -w "tester docs: HTTP %{http_code}\n" http://127.0.0.1/tester/docs
+curl -fsS -o /dev/null -w "web UI: HTTP %{http_code}\n" http://127.0.0.1/ || echo "web UI: not available"
 
 IP="$(curl -fsS --max-time 3 https://checkip.amazonaws.com 2>/dev/null || echo '<server-ip>')"
 cat <<EOF
 
-Done. Your registry URLs:
+Done. Web UI (for people):  http://$IP/system  (also http://$IP/)
+
+Your registry URLs:
     System base URL: http://$IP/system
     Tester base URL: http://$IP/tester
 

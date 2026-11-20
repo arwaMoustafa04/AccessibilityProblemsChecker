@@ -41,30 +41,46 @@ def test_fixture_oracles_and_reproducibility(case):
 
 
 @pytest.mark.parametrize("case", CASES)
-def test_endpoint_review_contract(case, monkeypatch):
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", False)
+def test_endpoint_review_contract(case):
     data = make_fixture(case)
     response = TestClient(app).post("/process", files={"file": (case + ".pdf", data, "application/pdf")})
     assert response.status_code == 200
     body = response.json()
     findings = body["findings"]
+<<<<<<< HEAD
     assert [f["issue_type"] for f in findings] == EXPECTED[case]
     assert body["checks_performed"] == [
         "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
     assert body["human_review_items"] == [f["finding_id"] for f in findings]
+=======
+    # The fixtures have no title or language, so other checks report those too.
+    mine = [f for f in findings if f["check_id"] in {"CHK-NONTEXT", "CHK-STRUCTURE"}]
+    assert [f["issue_type"] for f in mine] == EXPECTED[case]
+    assert {"CHK-NONTEXT", "CHK-STRUCTURE"} <= set(body["checks_performed"])
+    assert body["human_review_items"] == [
+        f["finding_id"] for f in findings if f["classification"] == "human_review"]
+>>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     assert all(f["classification"] == "human_review" and f["status"] == "needs_human_review"
-               and f["fix_description"] is None for f in findings)
-    for finding in findings:
+               and f["fix_description"] for f in mine)
+    for finding in mine:
         expected = "fail" if finding["issue_type"] in {
             "missing_figure_alt", "missing_document_structure"} else "needs_review"
         assert finding["evaluation_result"] == expected
         assert finding["location"]["object_ref"]
-    assert body["summary"] == {"total_issues": len(findings), "fixed_count": 0,
-                               "human_review_count": len(findings)}
-    assert body["repairs"] == body["new_issues_after_repair"] == []
-    assert body["outcome"] == "completed_no_repairs"
-    assert body["output_pdf"]["modified"] is False
-    assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
+    fixed = [f for f in findings if f["status"] == "fixed"]
+    assert body["summary"] == {"total_issues": len(findings), "fixed_count": len(fixed),
+                               "human_review_count": len(body["human_review_items"])}
+    # Phase 5 repairs only the auto-fixable title/language findings; the NONTEXT and
+    # STRUCTURE findings above stay needs_human_review, and repairs add no new issues.
+    repaired_ids = {r["finding_id"] for r in body["repairs"]}
+    assert repaired_ids == {f["finding_id"] for f in findings
+                            if f["classification"] == "auto_fixable"}
+    assert not repaired_ids & {f["finding_id"] for f in mine}
+    assert body["new_issues_after_repair"] == []
+    assert body["outcome"] == ("completed_with_repairs" if repaired_ids else "completed_no_repairs")
+    if not repaired_ids:
+        assert body["output_pdf"]["modified"] is False
+        assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
     with pikepdf.open(io.BytesIO(base64.b64decode(body["report_pdf"]["content_base64"]))) as report:
         assert len(report.pages) >= 1
         text = b"".join(s.read_bytes() for page in report.pages
@@ -184,7 +200,7 @@ def test_incomplete_inspection_is_a_review_finding(kind):
         elif kind == "bad_resources":
             pdf.pages[0].Resources = 42
         else:
-            pdf.pages[0].Contents = pdf.make_stream(b"/Missing Do")
+            pdf.pages[0].contents_add(pdf.make_stream(b"/Missing Do"))
     case = "nested_form" if kind == "form_cycle" else "tagged_image"
     issues = inspect(case, change)
     assert any(i.issue_type in {"malformed_structure", "image_inspection_incomplete"}
@@ -192,18 +208,24 @@ def test_incomplete_inspection_is_a_review_finding(kind):
 
 
 def test_mixed_repairs_and_review_findings(monkeypatch):
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
     with pikepdf.open(io.BytesIO(make_fixture("combined"))) as pdf:
-        del pdf.docinfo["/Title"]
-        del pdf.Root.Lang
+        if "/Title" in pdf.docinfo:
+            del pdf.docinfo["/Title"]
+        if "/Lang" in pdf.Root:
+            del pdf.Root.Lang
         data = io.BytesIO()
         pdf.save(data)
-    result = pipeline.run_pipeline(data.getvalue(), "mixed.pdf")
-    assert result.summary.total_issues == 4
-    assert result.summary.fixed_count == result.summary.human_review_count == 2
-    assert len(result.repairs) == 2
+    result = pipeline.run_pipeline(data.getvalue(), "annual_report.pdf")
+    review = [f for f in result.findings if f.check_id in {"CHK-NONTEXT", "CHK-STRUCTURE"}]
+    fixable = [f for f in result.findings if f.classification == "auto_fixable"]
+    assert [f.issue_type for f in review] == ["missing_figure_alt", "table_missing_headers"]
+    assert all(f.status == "needs_human_review" for f in review)
+    assert fixable and all(f.status == "fixed" for f in fixable)
+    assert result.summary.fixed_count == len(fixable) == len(result.repairs)
     assert all(r.validation_result == "passed" for r in result.repairs)
-    assert len(result.human_review_items) == 2
+    assert {f.finding_id for f in review} <= set(result.human_review_items)
+    # Saving the repaired copy must not make existing issues look new.
     assert result.new_issues_after_repair == []
 
 
@@ -220,14 +242,22 @@ def test_inline_image_in_tagged_figure():
 
 
 def test_revalidation_distinguishes_same_type_at_different_locations(monkeypatch):
-    from pdf_checks import Issue
-    first = Issue("CHK-TITLE", "missing_document_title", "first", "Title", page=1)
-    second = Issue("CHK-TITLE", "missing_document_title", "second", "Title", page=2)
-    new = Issue("CHK-NONTEXT", "missing_figure_alt", "new_figure", "Figure", page=1)
+    from checks import CheckRun
+    from checks.base import CheckContext, Issue
+    first = Issue("CHK-TITLE", "missing_document_title", "Title", page=1, object_ref="first")
+    second = Issue("CHK-TITLE", "missing_document_title", "Title", page=2, object_ref="second")
+    new = Issue("CHK-NONTEXT", "missing_figure_alt", "Figure", page=1, object_ref="new_figure")
     results = iter([[first, second], [second, new]])
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
-    monkeypatch.setattr(pipeline, "detect_issues", lambda pdf: next(results))
-    monkeypatch.setattr(pipeline, "repair", lambda *args: {"missing_document_title": "Set title"})
+
+    def evaluate(data, file_name, pdf):
+        return (CheckRun(performed=["CHK-NONTEXT", "CHK-TITLE"], issues=next(results)),
+                CheckContext(data, file_name, pdf))
+    from remediation import RepairAction, RepairContext
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
+    monkeypatch.setattr(pipeline, "evaluate", evaluate)
+    monkeypatch.setattr(pipeline, "repair", lambda pdf, issues, ctx, name: (
+        {i.key: RepairAction("Set title") for i in issues
+         if i.issue_type == "missing_document_title"}, RepairContext(pdf, ctx, name)))
     result = pipeline.run_pipeline(make_fixture("tagged_image"), "same_type.pdf")
     assert [f.status for f in result.findings] == ["fixed", "repair_failed"]
     assert [r.validation_result for r in result.repairs] == ["passed", "failed"]
@@ -255,7 +285,7 @@ def test_malformed_pdf_endpoint_remains_reviewable():
     with pikepdf.open(io.BytesIO(make_fixture("tagged_image"))) as pdf:
         doc = pdf.Root.StructTreeRoot.K[0]
         doc.K.append(doc)
-        pdf.pages[0].Contents = pdf.make_stream(b"/Missing Do")
+        pdf.pages[0].contents_add(pdf.make_stream(b"/Missing Do"))
         output = io.BytesIO()
         pdf.save(output)
     data = output.getvalue()
@@ -264,5 +294,59 @@ def test_malformed_pdf_endpoint_remains_reviewable():
     body = response.json()
     assert {f["issue_type"] for f in body["findings"]} >= {
         "malformed_structure", "image_inspection_incomplete"}
-    assert body["repairs"] == []
-    assert base64.b64decode(body["output_pdf"]["content_base64"]) == data
+    # Only the auto-fixable title/language findings are repaired; the malformed-structure
+    # and image findings stay for human review.
+    by_id = {f["finding_id"]: f for f in body["findings"]}
+    assert all(by_id[r["finding_id"]]["classification"] == "auto_fixable" for r in body["repairs"])
+
+
+# --- Generic (placeholder) Figure alternative text ---------------------------
+
+from pdf_checks import is_generic_alt  # noqa: E402
+
+
+@pytest.mark.parametrize("alt", ["image", "Image 1", "img_003", "figure-2", "photo.jpg",
+                                 "Untitled", "1234", "graphic", "logo.png", "Alt text"])
+def test_generic_alt_is_recognized(alt):
+    assert is_generic_alt(alt)
+
+
+@pytest.mark.parametrize("alt", ["A blue square", "Bar chart of weekly library visitors",
+                                 "Company logo: Purdue University", "Photo of the reading room",
+                                 "Map"])
+def test_descriptive_alt_is_not_generic(alt):
+    assert not is_generic_alt(alt)
+
+
+def _with_alt(alt: str) -> bytes:
+    pdf = pikepdf.open(io.BytesIO(make_fixture("tagged_image")))
+    figures = [o for o in pdf.objects
+               if isinstance(o, pikepdf.Dictionary) and o.get("/S") == pikepdf.Name.Figure]
+    assert figures
+    for figure in figures:
+        figure.Alt = pikepdf.String(alt)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    return buf.getvalue()
+
+
+def test_generic_figure_alt_needs_human_review():
+    data = _with_alt("image1")
+    with pikepdf.open(io.BytesIO(data)) as pdf:
+        issues = detect_pdf_issues(pdf)
+    generic = [i for i in issues if i.issue_type == "generic_figure_alt"]
+    assert len(generic) == 1 and generic[0].evaluation_result == "needs_review"
+    assert generic[0].page == 1 and '"image1"' in generic[0].description
+    assert not any(i.issue_type == "missing_figure_alt" for i in issues)
+
+    body = TestClient(app).post(
+        "/process", files={"file": ("figure.pdf", data, "application/pdf")}).json()
+    finding = next(f for f in body["findings"] if f["issue_type"] == "generic_figure_alt")
+    assert (finding["check_id"], finding["classification"], finding["status"]) == (
+        "CHK-NONTEXT", "human_review", "needs_human_review")
+    assert finding["finding_id"] in body["human_review_items"]
+
+
+def test_descriptive_figure_alt_is_not_flagged():
+    with pikepdf.open(io.BytesIO(_with_alt("A blue square on a white page"))) as pdf:
+        assert not any(i.issue_type == "generic_figure_alt" for i in detect_pdf_issues(pdf))

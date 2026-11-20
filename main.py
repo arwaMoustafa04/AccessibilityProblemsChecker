@@ -1,11 +1,12 @@
-"""HTTP entry point for the PDF accessibility service (pod shared spec v0.3.0)."""
+"""HTTP entry point for the PDF accessibility service (pod shared spec v0.5.0)."""
 
 import logging
 import time
+from typing import Literal
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from catalog import CHECKS
 from models import (
@@ -19,16 +20,24 @@ from models import (
     SystemReport,
     TestError,
 )
-from pipeline import MAX_FILE_SIZE_BYTES, PipelineError, run_pipeline
+from pipeline import (
+    MAX_FILE_SIZE_BYTES,
+    PipelineError,
+    build_results_zip,
+    results_zip_name,
+    run_pipeline,
+)
 from sessions import SessionExists, UnknownSession, store
 
-SPEC_VERSION = "0.3.0"
+SPEC_VERSION = "0.5.0"
 
 # One line per event on stderr; on the server, systemd sends it to the journal
 # (read with: sudo journalctl -u pdf-system).
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("pdf-system")
+
+store.warm_up()  # measures module-load lines for /test/report in the background
 
 app = FastAPI(
     title="Pod PDF Accessibility Evaluation and Remediation API",
@@ -64,18 +73,30 @@ def _test_error(status: int, message: str) -> JSONResponse:
                         content=TestError(message=message, source="system").model_dump())
 
 
+def _is_test_endpoint(request: Request) -> bool:
+    """True for /test/... requests. On the server the app runs under a prefix
+    (uvicorn --root-path /system), so the path is /system/test/...: strip it first."""
+    path = request.url.path
+    root = request.scope.get("root_path", "")
+    if root and path.startswith(root):
+        path = path[len(root):]
+    return path.startswith("/test/")
+
+
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     # FastAPI's default is 422; the course spec and the pod spec both use 400.
-    if request.url.path.startswith("/test/"):
+    if _is_test_endpoint(request):
         return _test_error(400, "Invalid request: " + "; ".join(
             str(e.get("msg")) for e in exc.errors()))
+    if any("output" in e.get("loc", ()) for e in exc.errors()):
+        return _error(400, "INVALID_REQUEST", INVALID_OUTPUT_MESSAGE)
     return _error(400, "MISSING_FILE", "Request must include a PDF in the 'file' field.")
 
 
 @app.exception_handler(Exception)
 async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
-    if request.url.path.startswith("/test/"):
+    if _is_test_endpoint(request):
         return _test_error(500, "Unexpected system failure.")
     return _error(500, "PROCESSING_ERROR", "Evaluation could not be completed for this file.")
 
@@ -111,18 +132,27 @@ def _error_doc(description: str, *examples: tuple[str, str, str]) -> dict:
     }
 
 
+INVALID_OUTPUT_MESSAGE = 'output must be "json" or "zip".'
+
 # Same status codes, error codes and messages as openapi.yaml and pipeline.py.
 PROCESS_ERROR_RESPONSES: dict[int | str, dict] = {
-    400: _error_doc("No file was attached",
+    200: {
+        "description": "Processing completed. JSON by default; a zip file when output=zip.",
+        "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}},
+    },
+    400: _error_doc("No file was attached, or output is not json/zip",
                     ("missing_file", "MISSING_FILE",
-                     "Request must include a PDF in the 'file' field.")),
+                     "Request must include a PDF in the 'file' field."),
+                    ("invalid_output", "INVALID_REQUEST", 'output must be "json" or "zip".')),
     413: _error_doc("File exceeds 20 MB",
                     ("file_too_large", "FILE_TOO_LARGE", "File exceeds the 20 MB project limit.")),
     415: _error_doc("File is not a PDF",
                     ("invalid_file_type", "INVALID_FILE_TYPE", "Input must be a PDF file.")),
-    422: _error_doc("PDF is corrupted, unreadable, encrypted or password-protected",
+    422: _error_doc("PDF is corrupted, unreadable, encrypted, password-protected or has no text layer",
                     ("corrupted", "CORRUPTED_PDF", "PDF is corrupted and cannot be processed."),
                     ("unreadable", "UNREADABLE_PDF", "PDF page tree cannot be read."),
+                    ("no_text_layer", "NO_TEXT_LAYER",
+                     "PDF has no extractable text layer. OCR is not supported."),
                     ("encrypted", "ENCRYPTED_PDF", "PDF is encrypted and cannot be processed."),
                     ("password_protected", "PASSWORD_PROTECTED_PDF",
                      "PDF is password-protected and cannot be opened.")),
@@ -143,22 +173,36 @@ PROCESS_ERROR_RESPONSES: dict[int | str, dict] = {
 def process_pdf(
     file: UploadFile | None = File(None),
     session_id: str | None = Form(None),
+    output: Literal["json", "zip"] = Form(
+        "json", description='"json" (default): results as JSON. "zip": one zip file with '
+        "original.pdf, the output PDF, the report PDF and result.json."),
 ):
-    """Evaluate a PDF, repair safe issues on a copy, re-validate, and return results."""
+    """Evaluate a PDF, repair safe issues on a copy, re-validate, and return results.
+
+    Set output=zip to download everything as one zip file instead of JSON.
+    """
+    with store.measure(session_id):  # the whole request counts toward the session
+        return _process(file, session_id, output)
+
+
+def _process(file: UploadFile | None, session_id: str | None, output: str):
     if file is None:
         log.info("process rejected error_code=MISSING_FILE")
         return _error(400, "MISSING_FILE", "Request must include a PDF in the 'file' field.")
     data = file.file.read(MAX_FILE_SIZE_BYTES + 1)
     try:
-        with store.measure(session_id):
-            result = run_pipeline(data, file.filename or "upload.pdf")
+        result = run_pipeline(data, file.filename or "upload.pdf")
     except PipelineError as err:
         log.info("process rejected error_code=%s size_bytes=%d session=%s",
                  err.error_code, len(data), session_id or "-")
         return _error(err.http_status, err.error_code, err.message)
     log.info("process completed outcome=%s checks=%d findings=%d repairs=%d "
-             "size_bytes=%d session=%s", result.outcome, len(result.checks_performed),
-             len(result.findings), len(result.repairs), len(data), session_id or "-")
+             "size_bytes=%d output=%s session=%s", result.outcome, len(result.checks_performed),
+             len(result.findings), len(result.repairs), len(data), output, session_id or "-")
+    if output == "zip":
+        name = results_zip_name(result)
+        return Response(content=build_results_zip(result, data), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
     return result
 
 

@@ -1,14 +1,54 @@
-import { downloadPdf } from '../api.js'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { downloadPdf, downloadResultsZip } from '../api.js'
 import { CHECKS } from '../data/checks.js'
-import { formatBytes } from '../format.js'
+import { formatBytes, scannedPages } from '../format.js'
+import { openPdf } from '../pdf.js'
 import FindingCard from './FindingCard.jsx'
+import PdfViewer from './PdfViewer.jsx'
+import RepairsSection from './RepairsSection.jsx'
 
 // Displays the POST /process response as-is; it does not judge accessibility itself.
-export default function ResultsScreen({ result, onRestart }) {
+// `file` is the uploaded PDF, shown in the side panel when a finding is selected.
+export default function ResultsScreen({ result, file, onRestart }) {
   const { input, checks_performed, findings, summary, limitations, compliance_statement } = result
+  const [selectedId, setSelectedId] = useState(null)
+  const [zipping, setZipping] = useState(false)
+  const selected = findings.find((f) => f.finding_id === selectedId)
+
+  // The PDF is opened once, the first time a finding is selected.
+  const documentRef = useRef(null)
+  const loadDocument = useCallback(() => (documentRef.current ??= openPdf(file)), [file])
+  useEffect(() => () => { documentRef.current?.then((d) => d.destroy(), () => {}) }, [])
+
+  // Leave room for the side panel while it is open (see .viewer-open in styles.css).
+  useEffect(() => {
+    document.body.classList.toggle('viewer-open', Boolean(selected))
+    return () => document.body.classList.remove('viewer-open')
+  }, [selected])
+
+  const closeViewer = useCallback(() => {
+    const id = selectedId
+    setSelectedId(null)
+    document.querySelector(`[data-show-finding="${id}"]`)?.focus()
+  }, [selectedId])
+
+  const downloadZip = async () => {
+    setZipping(true)
+    try {
+      await downloadResultsZip(result)
+    } finally {
+      setZipping(false)
+    }
+  }
   const performed = new Set(checks_performed)
+  const findingCounts = {}
+  for (const f of findings) findingCounts[f.check_id] = (findingCounts[f.check_id] ?? 0) + 1
   const autoFixable = findings.filter((f) => f.classification === 'auto_fixable').length
   const humanReview = findings.filter((f) => f.classification === 'human_review').length
+  const repairs = result.repairs ?? []
+  const repairByFinding = Object.fromEntries(repairs.map((r) => [r.finding_id, r]))
+  const scanned = scannedPages(limitations)
+  const scannedSet = new Set(scanned)
 
   return (
     <div className="results">
@@ -22,9 +62,24 @@ export default function ResultsScreen({ result, onRestart }) {
         <dl className="stats">
           <Stat label="Checks performed" value={`${checks_performed.length} / ${CHECKS.length}`} />
           <Stat label="Total findings" value={summary.total_issues} />
-          <Stat label="Auto-fixable" value={autoFixable} tone="fixable" />
+          {repairs.length > 0
+            ? <Stat label="Fixed automatically" value={summary.fixed_count} tone="fixable" />
+            : <Stat label="Auto-fixable" value={autoFixable} tone="fixable" />}
           <Stat label="Human review" value={humanReview} tone="review" />
         </dl>
+
+        {scanned.length > 0 && (
+          <div className="alert alert-warning" role="note">
+            <p className="alert-title">
+              {scanned.length === 1 ? `Page ${scanned[0]} is` : `Pages ${scanned.join(', ')} are`} scanned
+            </p>
+            <p>
+              {scanned.length === 1 ? 'This page has' : 'These pages have'} no text layer, and OCR is not
+              supported, so text-based checks (sensory, color, links, untagged headings) did not run there.
+              Image and structure checks still ran. Run OCR on the PDF and analyze it again for a full check.
+            </p>
+          </div>
+        )}
 
         {checks_performed.length === 0 && (
           <div className="alert alert-warning" role="note">
@@ -34,15 +89,29 @@ export default function ResultsScreen({ result, onRestart }) {
         )}
       </section>
 
+      <RepairsSection result={result} />
+
       <section className="card" aria-labelledby="findings-title">
         <h2 id="findings-title">Findings</h2>
+        {findings.length > 0 && (
+          <p className="muted findings-hint">Select a finding to see where it is in the PDF.</p>
+        )}
         {findings.length === 0 ? (
           <p className="muted">
             No findings were reported by the checks that ran. See Checks Performed and Limitations below.
           </p>
         ) : (
           <div className="finding-list">
-            {findings.map((f) => <FindingCard key={f.finding_id} finding={f} />)}
+            {findings.map((f) => (
+              <FindingCard
+                key={f.finding_id}
+                finding={f}
+                repair={repairByFinding[f.finding_id]}
+                scanned={scannedSet.has(f.location.page)}
+                selected={f.finding_id === selectedId}
+                onSelect={() => setSelectedId(f.finding_id)}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -53,12 +122,15 @@ export default function ResultsScreen({ result, onRestart }) {
           <ul className="check-list">
             {CHECKS.map((c) => {
               const ran = performed.has(c.check_id)
+              const count = findingCounts[c.check_id] ?? 0
               return (
                 <li key={c.check_id} className={ran ? 'ran' : 'not-ran'}>
                   <span className="check-mark" aria-hidden="true">{ran ? '✓' : '–'}</span>
                   <span>
                     {c.name} <span className="muted">({c.wcag_criterion})</span>
-                    {!ran && <span className="not-ran-label"> — not performed</span>}
+                    {ran
+                      ? <span className="muted"> — {count === 1 ? '1 finding' : `${count} findings`}</span>
+                      : <span className="not-ran-label"> — not performed</span>}
                   </span>
                 </li>
               )
@@ -91,10 +163,24 @@ export default function ResultsScreen({ result, onRestart }) {
             {result.output_pdf.modified ? 'Download Repaired PDF' : 'Download PDF'}
           </button>
         )}
+        {result.output_pdf && result.report_pdf && (
+          <button type="button" className="button button-secondary" onClick={downloadZip} disabled={zipping}>
+            {zipping ? 'Preparing ZIP…' : 'Download Fixed PDF + Report (ZIP)'}
+          </button>
+        )}
         <button type="button" className="button button-primary" onClick={onRestart}>
           Analyze Another PDF
         </button>
       </div>
+
+      {selected && (
+        <PdfViewer
+          key={selected.finding_id}
+          finding={selected}
+          loadDocument={loadDocument}
+          onClose={closeViewer}
+        />
+      )}
     </div>
   )
 }

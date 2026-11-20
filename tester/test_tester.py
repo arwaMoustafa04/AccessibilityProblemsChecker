@@ -57,13 +57,11 @@ def test_full_suite_passes_against_our_system(target) -> None:
     check_report_format(report)
     assert report["session_id"] == sid and report["target_url"] == TARGET
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-    for later in ("T-13", "T-14"):  # Phase 4-5 tests
-        assert outcomes.pop(later) == "skip"
-    assert set(outcomes.values()) == {"pass"}
+    assert set(outcomes.values()) == {"pass"}  # Phase 5: the repair test T-14 runs too
     cov = report["coverage"]
-    # Phase 3 exercises health, catalog, validation and report output only.
-    assert (cov["component"]["covered"], cov["component"]["total"]) == (4, 8)
-    assert (cov["system"]["covered"], cov["system"]["total"]) == (5, 10)
+    # Repair and re-validation (T-14) complete the component and acceptance criteria.
+    assert (cov["component"]["covered"], cov["component"]["total"]) == (8, 8)
+    assert (cov["system"]["covered"], cov["system"]["total"]) == (10, 10)
     assert 0 < cov["code"]["covered"] <= cov["code"]["total"]
 
     # Stored report is returned unchanged, and the session cannot be run again.
@@ -180,14 +178,18 @@ def test_tester_abort_keeps_partial_report(target, monkeypatch) -> None:
 
 
 def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
-    """The early title/language work, switched on, passes the Phase 5 test too."""
+    """The Phase 5 repair path, switched on, passes the Phase 5 test too."""
     import pipeline
-    monkeypatch.setattr(pipeline, "ENABLE_TITLE_LANG_CHECKS", True)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
     monkeypatch.setattr(suite, "CURRENT_PHASE", 5)
     sid = setup_session()
     report = tester.post("/test/run", json={"session_id": sid}).json()
     check_report_format(report)
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
+<<<<<<< HEAD
     # CHK-HEADINGS remains unimplemented, so full detection (T-13) still fails.
     assert outcomes.pop("T-13") == "fail"
+=======
+    # All eight checks are registered, so full detection (T-13) passes too.
+>>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     assert set(outcomes.values()) == {"pass"}

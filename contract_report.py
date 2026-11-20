@@ -46,10 +46,42 @@ def _to_json_schema(node):
 DEFS = _to_json_schema(SPEC["components"]["schemas"])
 
 
+ZIP = "zip"  # pseudo-schema: an output=zip response
+
+
+def _zip_as_result(resp: httpx.Response) -> dict | str:
+    """Rebuild the EvaluationResult from a zip response, or say what is wrong."""
+    import base64
+    import io
+    import json
+    import zipfile
+    if not resp.headers.get("content-type", "").startswith("application/zip"):
+        return f"content-type {resp.headers.get('content-type')!r}, not application/zip"
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(resp.content))
+        result = json.loads(zf.read("result.json"))
+        zf.read("original.pdf")
+        for key in ("output_pdf", "report_pdf"):  # put the PDFs back as Base64
+            content = zf.read(result[key]["file_name"])
+            result[key]["content_base64"] = base64.b64encode(content).decode()
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
+        return f"zip content: {exc}"
+    return result
+
+
 def conforms(resp: httpx.Response, status: int, schema: str) -> str | None:
     """None if the response matches the contract, else a short difference."""
     if resp.status_code != status:
         return f"expected HTTP {status}, got {resp.status_code}"
+    if schema == ZIP:
+        result = _zip_as_result(resp)
+        if isinstance(result, str):
+            return result
+        try:
+            jsonschema.validate(result, {"$defs": DEFS, "$ref": "#/$defs/EvaluationResult"})
+        except jsonschema.ValidationError as exc:
+            return f"result.json: {exc.message[:80]}"
+        return None
     try:
         body = resp.json()
     except ValueError:
@@ -68,18 +100,20 @@ def main(base: str) -> int:
     c = httpx.Client(timeout=60)
     sid = str(uuid.uuid4())
 
-    def process(data, name="t.pdf", path="/process"):
+    def process(data, name="t.pdf", path="/process", **form):
         files = {"file": (name, data, "application/pdf")} if data is not None else None
-        return c.post(f"{base}{path}", files=files, data={"session_id": sid})
+        return c.post(f"{base}{path}", files=files, data={"session_id": sid, **form})
 
     def upload_op(path: str, reqs: str):
         """Success and error cases for the upload endpoint."""
-        def call(data, name="t.pdf"):
-            return lambda: process(data, name, path)
+        def call(data, name="t.pdf", **form):
+            return lambda: process(data, name, path, **form)
         return (f"POST {path}", reqs,
                 [("200", call(clean_pdf()), 200, "EvaluationResult"),
-                 ("200 @20 MB", call(pdf_of_exact_size(20_971_520)), 200, "EvaluationResult")],
+                 ("200 @20 MB", call(pdf_of_exact_size(20_971_520)), 200, "EvaluationResult"),
+                 ("200 output=zip", call(clean_pdf(), output="zip"), 200, ZIP)],
                 [("400", call(None), 400, "Error"),
+                 ("400 output", call(clean_pdf(), output="pdf"), 400, "Error"),
                  ("413", call(pdf_of_exact_size(20_971_521)), 413, "Error"),
                  ("415", call(b"PK\x03\x04 not a pdf", "a.docx"), 415, "Error"),
                  ("422 corrupted", call(b"%PDF-1.7\n1 0 obj << /Broken"), 422, "Error"),
@@ -116,7 +150,7 @@ def main(base: str) -> int:
             diff = conforms(resp, status, schema)
             if diff:
                 ok_diffs.append(f"{name}: {diff}")
-            elif op == "POST /process":
+            elif op == "POST /process" and schema != ZIP:
                 done = len(resp.json()["checks_performed"])
                 if done < 8:
                     partial = f"{done}/8 checks run; detection is Phase 4, repair Phase 5"

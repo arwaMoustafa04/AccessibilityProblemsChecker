@@ -52,9 +52,11 @@ class Location(Strict):
     page: int | None = None
     object_ref: str | None = None
     description: str
+    # Optional: [x0, y0, x1, y1] on `page` in PDF user space, for highlighting in a viewer.
+    bbox: list[float] | None = None
 
 
-FindingStatus = Literal["fixed", "repair_failed", "needs_human_review"]
+FindingStatus = Literal["detected", "fixed", "repair_failed", "needs_human_review"]
 
 
 class Finding(Strict):
@@ -68,6 +70,9 @@ class Finding(Strict):
     classification: Classification
     status: FindingStatus
     fix_description: str | None = None
+    # Optional (spec v0.5.0): the concrete proposed text, and who wrote it.
+    suggested_text: str | None = None
+    suggestion_source: Literal["rule", "llm"] | None = None
 
 
 class Repair(Strict):
@@ -75,6 +80,9 @@ class Repair(Strict):
     finding_id: str
     action: str
     validation_result: Literal["passed", "failed"]
+    # Optional (spec v0.5.0): "llm" when the written text came from a language model.
+    method: Literal["rule", "llm"] = "rule"
+    applied_text: str | None = None  # the text written into the PDF, if any
 
 
 class InputFile(Strict):
@@ -128,8 +136,10 @@ ErrorCode = Literal[
     "FILE_TOO_LARGE",
     "CORRUPTED_PDF",
     "UNREADABLE_PDF",
+    "NO_TEXT_LAYER",
     "ENCRYPTED_PDF",
     "PASSWORD_PROTECTED_PDF",
+    "INVALID_REQUEST",
     "PROCESSING_ERROR",
     "EXTERNAL_SERVICE_UNAVAILABLE",
 ]

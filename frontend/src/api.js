@@ -1,4 +1,4 @@
-// Client for the system API (openapi.yaml, v0.4.0).
+// Client for the system API (openapi.yaml, v0.5.0).
 // In `npm run dev`, /api is proxied to the backend (see vite.config.js), so no CORS is needed.
 // Set VITE_API_URL to call a different base URL directly (that server must allow CORS).
 const API_BASE = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
@@ -10,6 +10,7 @@ const ERROR_TITLES = {
   FILE_TOO_LARGE: 'This file is too large',
   CORRUPTED_PDF: 'This PDF is corrupted',
   UNREADABLE_PDF: 'This PDF cannot be read',
+  NO_TEXT_LAYER: 'This PDF has no text layer',
   ENCRYPTED_PDF: 'This PDF is encrypted',
   PASSWORD_PROTECTED_PDF: 'This PDF is password-protected',
   PROCESSING_ERROR: 'The analysis could not be completed',
@@ -23,6 +24,7 @@ const ERROR_HINTS = {
   FILE_TOO_LARGE: 'The limit is 20 MiB. Try a smaller PDF.',
   CORRUPTED_PDF: 'Try re-exporting or re-saving the PDF, then upload it again.',
   UNREADABLE_PDF: 'Try re-exporting or re-saving the PDF, then upload it again.',
+  NO_TEXT_LAYER: 'It looks like a scanned or image-only PDF. Run OCR on it first (for example Acrobat "Scan & OCR"), then upload it again.',
   ENCRYPTED_PDF: 'Remove the encryption and try again.',
   PASSWORD_PROTECTED_PDF: 'Remove the password and try again.',
   EXTERNAL_SERVICE_UNAVAILABLE: 'Please try again in a few minutes.',
@@ -69,13 +71,29 @@ export async function processPdf(file) {
   )
 }
 
+function saveBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000) // some browsers start the download later
+}
+
 // Saves one of the result's PDFs (output_pdf / report_pdf: Base64 content) as a file.
 export function downloadPdf({ file_name, media_type, content_base64 }) {
   const bytes = Uint8Array.from(atob(content_base64), (c) => c.charCodeAt(0))
-  const url = URL.createObjectURL(new Blob([bytes], { type: media_type }))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = file_name
-  a.click()
-  URL.revokeObjectURL(url)
+  saveBlob(new Blob([bytes], { type: media_type }), file_name)
+}
+
+// Saves the output ("fixed") PDF and the report PDF together as
+// <original name>_AccessibilityResults.zip. JSZip is loaded on first use.
+export async function downloadResultsZip(result) {
+  const { default: JSZip } = await import('jszip')
+  const zip = new JSZip()
+  for (const pdf of [result.output_pdf, result.report_pdf]) {
+    zip.file(pdf.file_name, pdf.content_base64, { base64: true })
+  }
+  const stem = result.input.file_name.replace(/\.[^.]*$/, '') || 'document'
+  saveBlob(await zip.generateAsync({ type: 'blob' }), `${stem}_AccessibilityResults.zip`)
 }

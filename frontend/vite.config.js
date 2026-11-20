@@ -10,6 +10,17 @@ const API_PROXY_TARGET = process.env.API_PROXY_TARGET || 'http://127.0.0.1:8000'
 export default defineConfig({
   plugins: [react()],
   base: './',
+  build: {
+    rollupOptions: {
+      output: {
+        // pdf.js's worker is an .mjs file; save it as .js so any web server sends it
+        // as JavaScript (older nginx has no MIME type for .mjs, and the worker would not load).
+        assetFileNames: (asset) => (asset.names?.[0] ?? asset.name ?? '').endsWith('.mjs')
+          ? 'assets/[name]-[hash].js'
+          : 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': {
