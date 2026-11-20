@@ -49,7 +49,8 @@ def test_endpoint_review_contract(case, monkeypatch):
     body = response.json()
     findings = body["findings"]
     assert [f["issue_type"] for f in findings] == EXPECTED[case]
-    assert body["checks_performed"] == ["CHK-NONTEXT", "CHK-STRUCTURE"]
+    assert body["checks_performed"] == [
+        "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
     assert body["human_review_items"] == [f["finding_id"] for f in findings]
     assert all(f["classification"] == "human_review" and f["status"] == "needs_human_review"
                and f["fix_description"] is None for f in findings)

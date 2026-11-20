@@ -18,7 +18,9 @@ from pathlib import PurePath
 
 import pikepdf
 
+import wording_ai
 from catalog import CHECKS_BY_ID
+from language_checks import collect, link_index
 from models import (
     ErrorCode,
     EvaluationResult,
@@ -37,12 +39,9 @@ DEFAULT_LANGUAGE = "en-US"
 ENABLE_TITLE_LANG_CHECKS = os.environ.get("ENABLE_TITLE_LANG_CHECKS", "").lower() in (
     "1", "true", "yes")
 
-IMPLEMENTED_CHECKS = ["CHK-NONTEXT", "CHK-STRUCTURE"]
+IMPLEMENTED_CHECKS = ["CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
 TITLE_LANG_CHECKS = ["CHK-TITLE", "CHK-LANG"]
-NOT_YET_IMPLEMENTED = [
-    "CHK-SENSORY",
-    "CHK-COLOR", "CHK-LINK", "CHK-HEADINGS",
-]
+NOT_YET_IMPLEMENTED = ["CHK-HEADINGS"]
 
 
 class PipelineError(Exception):
@@ -196,6 +195,8 @@ def build_report_pdf(result: dict) -> bytes:
                            f"Page: {f['location']['page'] or 'document'}. "
                            f"Object: {f['location']['object_ref']}. "
                            f"Result: {f['evaluation_result']}. Status: {f['status']}."))
+            if f["fix_description"]:
+                story.append(p(f["fix_description"]))
     elif result["checks_performed"]:
         story.append(p("No issues found by the checks performed."))
     else:
@@ -243,8 +244,34 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     try:
         issues = detect_issues(pdf)
         actions = repair(pdf, issues, file_name) if ENABLE_TITLE_LANG_CHECKS else {}
+        candidates, tags, text_limits = collect(pdf, data)
+        suggestions = wording_ai.generate(candidates)
+        details = {}
+        label_edits = {}
+        for n, candidate in enumerate(candidates):
+            issue = candidate.issue
+            issues.append(issue)
+            ai_text = suggestions.get(str(n))
+            wording = ai_text or candidate.fallback
+            source = "AI" if ai_text else "fallback"
+            if candidate.annotation_index is None:
+                draft = " draft" if "[" in wording else ""
+                details[issue.key] = f"Suggested rewrite ({source}{draft}): {wording}"
+                continue
+            page_index = (issue.page or 1) - 1
+            index = candidate.annotation_index
+            annotation = pdf.pages[page_index].obj.Annots[index]
+            tag = tags.get(annotation.objgen)
+            annotation.Contents = wording
+            if tag is not None:
+                tag.Alt = wording
+            details[issue.key] = f"Applied label ({source}): {wording}"
+            if tag is None:
+                details[issue.key] += " (annotation only; check screen-reader support)"
+            label_edits[issue.key] = (page_index, index, wording, tag is not None)
+        modified = bool(actions or label_edits)
         repaired_bytes = data
-        if actions:
+        if modified:
             out = io.BytesIO()
             pdf.save(out)
             repaired_bytes = out.getvalue()
@@ -253,9 +280,18 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
 
     # REVALIDATED: re-run the implemented checks on the repaired copy.
     remaining = issues
-    if actions:
+    verified = {}
+    if modified:
         with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
             remaining = detect_issues(repaired)
+            saved_tags = link_index(repaired) if label_edits else {}
+            for key, (page_index, index, wording, tagged) in label_edits.items():
+                annotation = repaired.pages[page_index].obj.Annots[index]
+                tag = saved_tags.get(annotation.objgen)
+                verified[key] = (str(annotation.get("/Contents", "")) == wording and
+                                 (not tagged or (tag is not None and str(tag.get("/Alt", "")) == wording)))
+                if not verified[key]:
+                    details[key] = f"Label could not be verified: {wording}"
     remaining_keys = {i.key for i in remaining}
     original_keys = {i.key for i in issues}
 
@@ -264,7 +300,11 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     for n, issue in enumerate(issues, start=1):
         fid = f"F-{n}"
         if CHECKS_BY_ID[issue.check_id].classification == "human_review":
-            findings.append(_finding(fid, issue, "needs_human_review", None))
+            findings.append(_finding(fid, issue, "needs_human_review", details.get(issue.key)))
+            if issue.key in verified:
+                repairs.append(Repair(repair_id=f"R-{len(repairs) + 1}", finding_id=fid,
+                                      action=details[issue.key],
+                                      validation_result="passed" if verified[issue.key] else "failed"))
             continue
         passed = issue.key not in remaining_keys
         findings.append(_finding(fid, issue, "fixed" if passed else "repair_failed",
@@ -289,7 +329,7 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         "evaluation_id": str(uuid.uuid4()),
         "status": "completed",
         "input": {"file_name": file_name, "sha256": _sha256(data), "size_bytes": len(data)},
-        "outcome": "completed_with_repairs" if actions else "completed_no_repairs",
+        "outcome": "completed_with_repairs" if modified else "completed_no_repairs",
         "checks_performed": enabled,
         "findings": [f.model_dump() for f in findings],
         "repairs": [r.model_dump() for r in repairs],
@@ -300,7 +340,9 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         "limitations": [
             "Checks " + ", ".join(disabled)
             + " were not performed (unimplemented or disabled).",
-            "Human-review findings are never repaired automatically.",
+            "Link label writes are verified in the saved PDF. A person should confirm the wording. "
+            "Color and sensory rewrites are suggestions for the author.",
+            *text_limits,
             "Image purpose, alternative-text accuracy, reading order, complete tagging, and table "
             "semantics require human review. Untagged tables and vector graphics are not inferred.",
             "A present Alt or TH tag does not establish accessibility or semantic correctness.",
@@ -313,7 +355,7 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     return EvaluationResult.model_validate({
         **result,
         "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(repaired_bytes),
-                              modified=bool(actions), content_base64=_b64(repaired_bytes)),
+                              modified=modified, content_base64=_b64(repaired_bytes)),
         "report_pdf": OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
                               content_base64=_b64(report_bytes)),
     })

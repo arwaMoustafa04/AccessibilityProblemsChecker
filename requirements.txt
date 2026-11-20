@@ -6,3 +6,5 @@ python-multipart==0.0.32
 pikepdf==10.13.0.post1
 reportlab==5.0.1
 coverage==7.16.2
+pdfminer.six==20260107
+httpx==0.28.1

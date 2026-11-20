@@ -2,7 +2,7 @@
 
 Team 1 (West Lafayette, Pod D) implementation of the pod's shared PDF accessibility
 service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WCAG 2.1 AA).
-This README describes the Phase 3 interface plus the implemented image and structure checks.
+This README describes the Phase 3 interface plus the implemented accessibility checks.
 
 ## Deployed services
 
@@ -59,7 +59,7 @@ Course test endpoints:
   `compliance_statement` ("This report does not certify ADA Title II or WCAG 2.1
   conformance."), `output_pdf` and `report_pdf` (file name, media type, SHA-256,
   `modified`, Base64 content).
-- **Finding / Repair / Location**: check results and locations; human-review findings never create repair records.
+- **Finding / Repair / Location**: check results and locations; a link label edit creates a repair record while its wording awaits review.
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
   `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `CORRUPTED_PDF`, `UNREADABLE_PDF`,
   `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `PROCESSING_ERROR`, `EXTERNAL_SERVICE_UNAVAILABLE`.
@@ -67,7 +67,7 @@ Course test endpoints:
 
 ### What `/process` does now
 
-The interface and upload validation are complete. CHK-NONTEXT and CHK-STRUCTURE
+The interface and upload validation are complete. Image, structure, link, color, and sensory checks
 run on every upload; the remaining checks are incomplete or disabled.
 
 - **Input validation is complete:** no file → 400 `MISSING_FILE`; over 20 MB
@@ -85,11 +85,33 @@ run on every upload; the remaining checks are incomplete or disabled.
   `needs_review`. Nested tables are inspected separately.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
   and finding IDs in `human_review_items`. They never trigger repairs. The original
-  PDF is returned byte-for-byte unchanged unless flagged title/language repair runs.
+  PDF is returned byte-for-byte unchanged unless a link label or title/language repair is applied.
   JSON and report PDF include performed checks, findings, locations and limitations.
 - Title/language detection and repair remain opt-in via `ENABLE_TITLE_LANG_CHECKS=true`.
   `checks_performed` lists only enabled checks; disabled checks appear in limitations.
 - PDFs are processed in memory and never stored.
+
+### Link labels and wording suggestions
+
+CHK-LINK matches generic visible wording to PDF link annotations. It writes a label onto
+the output copy (annotation `/Contents` and associated Link structure element `/Alt`
+where available), then verifies it by reopening the saved PDF. Visible text and destinations
+are preserved. The finding stays open for human review, including screen-reader testing
+for annotation-only links.
+
+CHK-COLOR and CHK-SENSORY identify English instructions that rely on color or a sensory cue
+such as position, shape, size, or sound. Findings include the source sentence and suggested
+rewrite in the JSON, finding card and PDF report. Applying sentence edits is the author's
+decision. Wording detection uses extractable text and common English instruction patterns.
+Pages with no extractable text are listed under limitations.
+
+Set `OPENAI_API_KEY` on the backend to enable the OpenAI Responses API. `OPENAI_MODEL`
+defaults to `gpt-4.1-mini`. Requests batch up to 32 candidates with short excerpts and
+destination hints (host/path or internal page), with response storage disabled. The service
+uses local fallback templates when its 20-second AI budget expires, for missing credentials, timeouts and
+unusable suggestions. Fallback labels use an action or destination when available and
+otherwise say “Open linked destination.” Bracketed identifiers in rewrite drafts need an
+author to supply the actual name. Review the source shown next to each suggestion.
 
 ## Tester (`tester/` folder)
 
@@ -138,10 +160,10 @@ component coverage 4/8, system (acceptance-criteria) coverage 5/10.
   is not treated as a Figure `/Alt` replacement. Malformed/cyclic data produces review
   findings for incomplete inspection. Tree depth over 128, more than 100,000 structure
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
-- CHK-SENSORY, CHK-COLOR, CHK-LINK and CHK-HEADINGS are unimplemented. Title/language
+- CHK-HEADINGS is unimplemented. Title/language
   detection and repair remain behind `ENABLE_TITLE_LANG_CHECKS` (off by default).
 - **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
-  conformance; human-review items are never repaired automatically.
+  conformance; a person must confirm the meaning of proposed and applied wording.
 - **Sessions are in memory** (system and tester): they are lost when a service
   restarts, and system coverage measurement handles one measured request at a time.
 - **HTTP only, no authentication**, single small EC2 instance: no HTTPS certificate,

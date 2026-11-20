@@ -140,7 +140,7 @@ paths:
           4. CLASSIFIED   - each finding is auto_fixable or human_review, never both
           5. REPAIRED     - only CHK-TITLE and CHK-LANG findings are fixed, on a copy;
                             the uploaded file is never changed
-          6. REVALIDATED  - CHK-TITLE and CHK-LANG re-run on the repaired copy
+          6. REVALIDATED  - verify written link labels and re-run enabled metadata checks on the repaired copy
           7. REPORTED     - output PDF, report PDF, and JSON results returned (status: completed)
         Nothing about the PDF is stored after the response is sent. If session_id names a
         session created by /test/setup, the system also records code coverage for it.
@@ -149,6 +149,9 @@ paths:
           - outcome says whether any repairs were applied.
           - Every finding has exactly one classification and one final status.
           - repairs lists each attempted fix and whether it passed re-validation.
+          - A CHK-LINK repair records a verified accessible-label edit. Its finding remains
+            needs_human_review for the wording. CHK-COLOR and CHK-SENSORY rewrites are suggestions
+            in fix_description and do not alter the PDF.
           - new_issues_after_repair lists problems the repairs introduced.
           - needs_human_review findings are unresolved by design, not system failures.
           - An empty array means "none found", never "not checked".

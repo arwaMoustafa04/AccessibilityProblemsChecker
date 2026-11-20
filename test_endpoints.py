@@ -200,7 +200,8 @@ def test_default_checks_leave_tagged_pdf_unchanged(post_pdf) -> None:
             assert len(pdf.pages) > 0
     assert body["status"] == "completed"
     assert body["outcome"] == "completed_no_repairs"
-    assert body["checks_performed"] == ["CHK-NONTEXT", "CHK-STRUCTURE"]
+    assert body["checks_performed"] == [
+        "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
     assert body["findings"] == [] and body["repairs"] == []
     assert body["summary"] == {"total_issues": 0, "fixed_count": 0, "human_review_count": 0}
     assert "CHK-TITLE" in body["limitations"][0]
@@ -227,7 +228,8 @@ def test_pdf_missing_title_and_language_is_repaired(title_lang_on, post_pdf) -> 
     assert body["outcome"] == "completed_with_repairs"
     assert body["input"] == {"file_name": "annual_report.pdf", "sha256": original_hash,
                              "size_bytes": len(original)}
-    assert body["checks_performed"] == ["CHK-NONTEXT", "CHK-STRUCTURE", "CHK-TITLE", "CHK-LANG"]
+    assert body["checks_performed"] == [
+        "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY", "CHK-TITLE", "CHK-LANG"]
     assert {f["issue_type"] for f in body["findings"]} == {
         "missing_document_title", "display_doc_title_not_set", "missing_document_language"}
     assert all(f["status"] == "fixed" for f in body["findings"])
