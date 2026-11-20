@@ -427,7 +427,9 @@ def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: C
         with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
             after, after_ctx = evaluate(repaired_bytes, file_name, repaired)
             try:
-                if after.failed:
+                # A check that already failed on the original cannot judge the repairs
+                # either way; only a check the repairs broke means they are unsafe.
+                if set(after.failed) - set(run.failed):
                     raise ValueError("Re-validation did not complete every check")
                 new_rules = new_verapdf_failures(ctx, after_ctx)
                 mapping = object_number_map(pdf, repaired)

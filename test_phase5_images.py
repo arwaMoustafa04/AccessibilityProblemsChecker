@@ -287,3 +287,45 @@ def test_two_distinct_figures_receive_their_own_descriptions(monkeypatch):
         assert str(first.Alt).startswith("Blue square first")
         assert str(second.Alt).startswith("Red square second")
     assert len([r for r in result.repairs if r.method == "llm"]) == 2
+
+
+def test_check_failing_before_and_after_does_not_discard_repairs(monkeypatch) -> None:
+    """A check that crashes on the original too must not throw away the other repairs."""
+    from pathlib import Path
+
+    import checks
+    import pipeline
+
+    def broken(ctx):
+        raise RuntimeError("bug in one check")
+
+    monkeypatch.setitem(checks.CHECK_FUNCTIONS, "CHK-COLOR", broken)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
+    data = (Path(__file__).parent / "tester/fixtures/accessibilityIssues.pdf").read_bytes()
+    result = pipeline.run_pipeline(data, "accessibilityIssues.pdf")
+    assert result.repairs and result.output_pdf.modified
+    assert not any("repairs were discarded" in n for n in result.limitations)
+    assert any("CHK-COLOR" in n for n in result.limitations)  # the crash is still reported
+
+
+def test_check_broken_only_by_repair_discards_repairs(monkeypatch) -> None:
+    from pathlib import Path
+
+    import checks
+    import pipeline
+
+    real = checks.CHECK_FUNCTIONS["CHK-COLOR"]
+    seen = {"n": 0}
+
+    def breaks_second_time(ctx):
+        seen["n"] += 1
+        if seen["n"] > 1:
+            raise RuntimeError("repaired file broke this check")
+        return real(ctx)
+
+    monkeypatch.setitem(checks.CHECK_FUNCTIONS, "CHK-COLOR", breaks_second_time)
+    monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
+    data = (Path(__file__).parent / "tester/fixtures/accessibilityIssues.pdf").read_bytes()
+    result = pipeline.run_pipeline(data, "accessibilityIssues.pdf")
+    assert result.repairs == [] and not result.output_pdf.modified
+    assert any("repairs were discarded" in n for n in result.limitations)

@@ -34,8 +34,8 @@ Elastic IP) behind nginx, with veraPDF (Java) on the same instance; see
 
 **Access / run notes (as in the registry):** no authentication. Base URLs have no
 trailing slash. Maximum times: system `/test/setup` 10 s; tester `/test/setup` 15 s;
-tester `/test/run` at most 21 project calls × 60 s plus 10 s for the target's
-`/test/report` (≈ 21 min worst case); a normal run against our system takes under a minute.
+tester `/test/run` at most 25 project calls × 60 s plus 10 s for the target's
+`/test/report` (≈ 25 min worst case); a normal run against our system takes under a minute.
 
 ## Architecture
 
@@ -196,10 +196,10 @@ error source; code, component and system coverage).
 | Endpoint | What it does |
 |---|---|
 | `POST /test/setup` | `{"target_url": "<system base URL>"}` → creates a session, calls the target's `/test/setup`, returns 201 `{"session_id"}` |
-| `POST /test/run` | `{"session_id"}` → runs T-01 to T-21 once, reads the target's `/test/report`, returns the full report |
+| `POST /test/run` | `{"session_id"}` → runs T-01 to T-25 once, reads the target's `/test/report`, returns the full report |
 | `GET /test/report?session_id=...` | Returns the stored report (409 until the run ends) |
 
-The 21 tests (`tester/suite.py`):
+The 25 tests (`tester/suite.py`):
 
 | Test | Checks | Acceptance criteria |
 |---|---|---|
@@ -224,6 +224,10 @@ The 21 tests (`tester/suite.py`):
 | T-19 | Generated tagged PDF: placeholder title, invalid language (auto_fixable), heading and form-label problems (human_review) | AC-03, AC-04, AC-07 |
 | T-20 | `output=zip`: original, output PDF, report PDF and `result.json`, all matching | AC-01, AC-09 |
 | T-21 | `output=xml` → 400 `INVALID_REQUEST` | AC-02 |
+| T-22 | Generated picture-only PDF (no text layer) → 422 `NO_TEXT_LAYER` (**Phase 5**) | AC-02 |
+| T-23 | Generated PDF, page 1 text + page 2 scanned → processed, page 2 named in `limitations`, no text-based findings on it (**Phase 5**) | AC-03 |
+| T-24 | `accessibilityIssues.pdf`: spec v0.5.0 repair rules (method/source values, repaired human-review items stay unresolved, `fixed_count`, `modified`); never compares AI text (**Phase 5**) | AC-04, AC-06, AC-07 |
+| T-25 | Generated tagged PDF: `/Lang` "en_US" and title "Untitled" repaired to a valid tag and a real title, re-validated (**Phase 5**) | AC-05, AC-06 |
 
 Named files are the team's shared test set in `tester/fixtures/` (its README gives each
 file's expected result); the no-file, corrupted and exact-size cases are generated in code.
@@ -296,7 +300,7 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
 - `sessions.py`: test sessions and per-session code coverage (coverage.py)
 - `contract_report.py`: contract-conformance table for any deployed system
 - `tester/app.py`: tester endpoints, sessions, report, coverage aggregation
-- `tester/suite.py`: the 21 test cases (`CURRENT_PHASE = 5`)
+- `tester/suite.py`: the 25 test cases (`CURRENT_PHASE = 5`)
 - `deploy/setup.sh`: EC2 install (venv, veraPDF, UI build, systemd services, nginx)
 - `frontend/`: React + Vite web UI (upload, results, PDF viewer with highlights)
 - `.github/workflows/ci.yml`: ruff, mypy, OpenAPI validation, pip-audit, pytest, conformance report, full tester run
@@ -346,7 +350,7 @@ nginx, Java and veraPDF (`/opt/verapdf`), creates the venv, builds the React UI 
 `/var/www/pdf-ui`, and sets up two systemd services (`pdf-system` on port 8001,
 `pdf-tester` on 8002) that restart automatically. nginx maps `/system/` and `/tester/`
 to them, serves the UI at `/system/ui/` (the bare `/system` redirects there) and at `/`,
-with `client_max_body_size 100m` and a 1500 s read timeout. The veraPDF and UI steps are
+with `client_max_body_size 100m` and a 1800 s read timeout. The veraPDF and UI steps are
 optional (`SKIP_VERAPDF=1`, `SKIP_UI=1`); if one fails, the API and tester still deploy.
 Logs: `sudo journalctl -u pdf-system -u pdf-tester`.
 

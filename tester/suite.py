@@ -16,6 +16,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -526,6 +527,137 @@ def t_invalid_output(ctx: Context) -> str:
 
 
 
+# --- Phase 5 (spec v0.5.0): scanned PDFs, repair contract, language/title repair -------
+
+TEXT_BASED_CHECKS = {"CHK-SENSORY", "CHK-COLOR", "CHK-LINK"}
+# BCP 47 shape: language, optional script, optional region (enough to catch "en_US").
+BCP47 = re.compile(r"^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|\d{3}))?$")
+
+
+def _image_page(pdf: pikepdf.Pdf) -> None:
+    """Add a page that only shows a picture (a "scanned" page: no text layer)."""
+    page = pdf.add_blank_page(page_size=(612, 792))
+    image = pdf.make_stream(bytes([180]) * (60 * 40), Type=pikepdf.Name.XObject,
+                            Subtype=pikepdf.Name.Image, Width=60, Height=40,
+                            ColorSpace=pikepdf.Name.DeviceGray, BitsPerComponent=8)
+    page.Resources = pikepdf.Dictionary(XObject=pikepdf.Dictionary(Im0=image))
+    page.Contents = pdf.make_stream(b"q 480 0 0 320 66 400 cm /Im0 Do Q")
+
+
+def _text_page(pdf: pikepdf.Pdf, text: bytes) -> None:
+    page = pdf.add_blank_page(page_size=(612, 792))
+    font = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1, BaseFont=pikepdf.Name.Helvetica))
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font))
+    page.Contents = pdf.make_stream(b"BT /F1 12 Tf 72 700 Td (" + text + b") Tj ET")
+
+
+def _saved(pdf: pikepdf.Pdf) -> bytes:
+    buf = io.BytesIO()
+    pdf.save(buf, deterministic_id=True)
+    return buf.getvalue()
+
+
+def scanned_pdf() -> bytes:
+    """Two picture-only pages: no page has a text layer."""
+    pdf = pikepdf.new()
+    _image_page(pdf)
+    _image_page(pdf)
+    pdf.docinfo["/Title"] = "Scanned letter"
+    pdf.Root.Lang = pikepdf.String("en-US")
+    return _saved(pdf)
+
+
+SENSORY_COLOR_TEXT = (b"To submit the form, click the round red button on the right. "
+                      b"Required fields are shown in red.")
+
+
+def mixed_scanned_pdf() -> bytes:
+    """Page 1 has text; page 2 is a picture of the same instructions (scanned)."""
+    pdf = pikepdf.new()
+    _text_page(pdf, SENSORY_COLOR_TEXT)
+    _image_page(pdf)
+    pdf.docinfo["/Title"] = "Application instructions"
+    pdf.Root.Lang = pikepdf.String("en-US")
+    return _saved(pdf)
+
+
+def t_scanned_rejected(ctx: Context) -> str:
+    return expect_error(ctx.process(scanned_pdf(), name="scanned.pdf"), 422, {"NO_TEXT_LAYER"})
+
+
+def t_partly_scanned(ctx: Context) -> str:
+    sent = mixed_scanned_pdf()
+    body = expect_evaluation(ctx.process(sent, name="mixed_scanned.pdf"), sent)
+    notes = [str(n) for n in body["limitations"]]
+    if not any("scanned" in n.lower() and re.search(r"\b2\b", n) for n in notes):
+        raise Mismatch("Expected limitations to name page 2 as scanned; received "
+                       f"{notes}.")
+    on_scanned = [f["finding_id"] for f in body["findings"]
+                  if f.get("check_id") in TEXT_BASED_CHECKS
+                  and (f.get("location") or {}).get("page") == 2]
+    if on_scanned:
+        raise Mismatch(f"Expected no text-based findings on scanned page 2; received {on_scanned}.")
+    return ("Expected a partly scanned PDF to be processed, page 2 named as scanned in "
+            "limitations and no text-based findings on it; received that.")
+
+
+def t_repair_contract(ctx: Context) -> str:
+    """The spec v0.5.0 repair rules, without comparing any AI-written text."""
+    sent = fixture("accessibilityIssues.pdf")
+    body = expect_evaluation(ctx.process(sent, name="accessibilityIssues.pdf"), sent)
+    findings = {f["finding_id"]: f for f in body["findings"]}
+    for f in findings.values():
+        source = f.get("suggestion_source")
+        if source not in (None, "rule", "llm"):
+            raise Mismatch(f"{f['finding_id']}: suggestion_source must be rule, llm or null; "
+                           f"received {source!r}.")
+        if source is not None and not f.get("suggested_text"):
+            raise Mismatch(f"{f['finding_id']}: suggestion_source is set but suggested_text is empty.")
+    for r in body["repairs"]:
+        if r.get("method", "rule") not in ("rule", "llm"):
+            raise Mismatch(f"{r['repair_id']}: method must be rule or llm; received {r.get('method')!r}.")
+        f = findings.get(r.get("finding_id"))
+        if f is None:
+            raise Mismatch(f"{r['repair_id']} refers to unknown finding {r.get('finding_id')}.")
+        if f.get("classification") == "human_review":
+            # AI text may be written for a human-review finding, but it is never resolved.
+            if f.get("status") != "needs_human_review" or f["finding_id"] not in body["human_review_items"]:
+                raise Mismatch(f"{f['finding_id']} is human_review and was repaired, so it must stay "
+                               "needs_human_review and in human_review_items; received "
+                               f"{f.get('status')}.")
+    fixed = sum(f.get("status") == "fixed" for f in findings.values())
+    if body["summary"]["fixed_count"] != fixed:
+        raise Mismatch(f"summary.fixed_count is {body['summary']['fixed_count']} but {fixed} "
+                       "findings are fixed (human-review repairs are not counted).")
+    if body["output_pdf"]["modified"] != bool(body["repairs"]):
+        raise Mismatch("output_pdf.modified must be true exactly when repairs were applied.")
+    ai = sum(r.get("method") == "llm" for r in body["repairs"])
+    return (f"Expected the v0.5.0 repair rules to hold; received {len(body['repairs'])} repairs "
+            f"({ai} AI-assisted), human-review items unresolved, fixed_count consistent.")
+
+
+def t_language_and_title_repaired(ctx: Context) -> str:
+    sent = tagged_problems_pdf()  # title "Untitled", /Lang "en_US"
+    body = expect_evaluation(ctx.process(sent, name="tagged_problems.pdf"), sent)
+    for check_id in ("CHK-TITLE", "CHK-LANG"):
+        mine = [f for f in body["findings"] if f.get("check_id") == check_id]
+        if not mine or any(f.get("status") != "fixed" for f in mine):
+            raise Mismatch(f"Expected every {check_id} finding fixed; received "
+                           f"{[(f.get('issue_type'), f.get('status')) for f in mine]}.")
+    repaired = decode_pdf(body["output_pdf"], "output_pdf")
+    with pikepdf.open(io.BytesIO(repaired)) as pdf:
+        lang = str(pdf.Root.get("/Lang", "")).strip()
+        title = str(pdf.docinfo.get("/Title", "")).strip()
+    if not BCP47.match(lang):
+        raise Mismatch(f'Expected a valid language tag in the repaired PDF; received "{lang}".')
+    if not title or title.lower() in ("untitled", "tagged_problems", "tagged_problems.pdf"):
+        raise Mismatch(f'Expected a descriptive title in the repaired PDF; received "{title}".')
+    return (f'Expected "en_US" and the placeholder title "Untitled" repaired; received '
+            f'language "{lang}" and a new title, both re-validated as fixed.')
+
+
+
 @dataclass(frozen=True)
 class TestCase:
     test_id: str
@@ -571,4 +703,12 @@ SUITE: list[TestCase] = [
     # Results zip (spec v0.4.0 output=zip) and its input check
     TestCase("T-20", t_results_zip, ("COMP-REPORT",), ("AC-01", "AC-09"), phase=4),
     TestCase("T-21", t_invalid_output, ("COMP-VALIDATION",), ("AC-02",), phase=4),
+    # Phase 5 (spec v0.5.0): scanned PDFs and the repair rules
+    TestCase("T-22", t_scanned_rejected, ("COMP-VALIDATION",), ("AC-02",), phase=5),
+    TestCase("T-23", t_partly_scanned, ("COMP-VALIDATION", "COMP-DETECTION", "COMP-REPORT"),
+             ("AC-03",), phase=5),
+    TestCase("T-24", t_repair_contract, ("COMP-REPAIR", "COMP-REVALIDATION", "COMP-REPORT"),
+             ("AC-04", "AC-06", "AC-07"), phase=5),
+    TestCase("T-25", t_language_and_title_repaired, ("COMP-REPAIR", "COMP-REVALIDATION"),
+             ("AC-05", "AC-06"), phase=5),
 ]
