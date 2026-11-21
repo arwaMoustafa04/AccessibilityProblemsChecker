@@ -101,10 +101,28 @@ def test_disk_cache_survives_a_restart(api, monkeypatch, tmp_path):
     assert len(api.requests) == 1
 
 
-def test_rate_limited_call_is_retried(api):
-    api.responses = [429, "Campus Library Hours"]
+def test_rate_limited_model_is_rested_not_retried(api):
+    """429: no immediate retry of the same model; the fallback is tried, and the limited
+    model is skipped for later tasks instead of spending the PDF's call budget."""
+    api.responses = [429, "Campus Library Hours", "Apply for financial aid"]
     assert llm.suggest_title("Campus Library Hours", "a.pdf") == "Campus Library Hours"
-    assert len(api.requests) == 2
+    assert [r["body"]["model"] for r in api.requests] == [
+        llm.DEFAULT_MODEL, "nvidia/nemotron-3.5-super-vl:free"]
+    assert llm.suggest_link_text("To apply, click here", "https://x.edu/aid")
+    assert api.requests[2]["body"]["model"] == "nvidia/nemotron-3.5-super-vl:free"
+
+
+def test_server_errors_are_still_retried(api):
+    api.responses = [503, "Campus Library Hours"]
+    assert llm.suggest_title("Campus Library Hours", "a.pdf") == "Campus Library Hours"
+    assert [r["body"]["model"] for r in api.requests] == [llm.DEFAULT_MODEL] * 2
+
+
+def test_no_allowed_provider_skips_that_model_later(api):
+    api.responses = [429, 404, 429]  # Gemma busy, Nemotron not allowed by "deny"
+    assert llm.suggest_title("Text", "a.pdf") is None
+    assert llm.suggest_link_text("Click here", "https://x.edu") is None
+    assert len(api.requests) == 2  # second task: both models resting, no calls spent
 
 
 def test_failing_model_falls_back_to_the_next(api):

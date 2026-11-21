@@ -167,6 +167,8 @@ def reset_limits() -> None:
     _limiter = _RateLimiter()
     stats = Stats()
     _memory_cache.clear()
+    with _cooldown_lock:
+        _cooldown.clear()
 
 
 # --- Cache -----------------------------------------------------------------------
@@ -217,9 +219,41 @@ def _cache_put(key: str, value: str, disk: bool = True) -> None:
 # --- HTTP ------------------------------------------------------------------------
 
 class _CallFailed(Exception):
-    def __init__(self, reason: str, retry: bool = False):
+    def __init__(self, reason: str, retry: bool = False, status: int | None = None,
+                 retry_after: float | None = None):
         super().__init__(reason)
         self.retry = retry
+        self.status = status
+        self.retry_after = retry_after
+
+
+# A model that answered 429 (rate-limited) or 404 (no provider allowed by the privacy
+# setting) is skipped until this time, instead of spending the PDF's call budget on it.
+COOLDOWN_429_SECONDS = 60.0
+COOLDOWN_404_SECONDS = 600.0
+_cooldown: dict[str, float] = {}
+_cooldown_lock = threading.Lock()
+
+
+def _cooling(model: str) -> bool:
+    with _cooldown_lock:
+        return _cooldown.get(model, 0.0) > time.monotonic()
+
+
+def _cool_down(model: str, seconds: float) -> None:
+    with _cooldown_lock:
+        _cooldown[model] = time.monotonic() + seconds
+
+
+def _error_detail(err: urllib.error.HTTPError) -> str:
+    """OpenRouter's own message (e.g. which rate limit), shortened for the log."""
+    try:
+        body = err.read(600).decode("utf-8", "replace")
+        data = json.loads(body)
+        message = data.get("error", {}).get("message") or body
+    except Exception:
+        return ""
+    return " ".join(str(message).split())[:200]
 
 
 def _post(model: str, messages: list[dict], max_tokens: int, timeout: float) -> str:
@@ -240,7 +274,14 @@ def _post(model: str, messages: list[dict], max_tokens: int, timeout: float) -> 
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read())
     except urllib.error.HTTPError as err:
-        raise _CallFailed(f"HTTP {err.code}", retry=err.code in RETRY_STATUSES) from None
+        detail = _error_detail(err)
+        try:
+            retry_after = float(err.headers.get("Retry-After", "")) if err.headers else None
+        except (TypeError, ValueError):
+            retry_after = None
+        raise _CallFailed(f"HTTP {err.code}" + (f" ({detail})" if detail else ""),
+                          retry=err.code in RETRY_STATUSES and err.code != 429,
+                          status=err.code, retry_after=retry_after) from None
     except (urllib.error.URLError, TimeoutError, OSError) as err:
         raise _CallFailed(f"network: {type(err).__name__}", retry=True) from None
     except ValueError:
@@ -277,6 +318,10 @@ def _ask(task: str, model: str, messages: list[dict], cache_parts: list[str | by
     models = [model] + [m.strip() for m in _env("LLM_FALLBACK_MODELS", DEFAULT_FALLBACKS)
                         .split(",") if m.strip() and m.strip() != model]
     for current in models:
+        if _cooling(current):
+            log.info("llm skipped model=%s task=%s reason=recently rate-limited or unavailable",
+                     current, task)
+            continue
         for attempt in range(2):
             timeout = _env_float("LLM_TIMEOUT_SECONDS", 15.0)
             if budget is not None:
@@ -301,6 +346,12 @@ def _ask(task: str, model: str, messages: list[dict], cache_parts: list[str | by
                 stats.failures += 1
                 log.warning("llm call failed task=%s model=%s attempt=%d reason=%s",
                             task, current, attempt + 1, err)
+                if err.status == 429:  # retrying at once rarely helps: rest this model
+                    _cool_down(current, min(err.retry_after or COOLDOWN_429_SECONDS, 600.0))
+                    break
+                if err.status == 404:  # no allowed provider (e.g. LLM_DATA_COLLECTION=deny)
+                    _cool_down(current, COOLDOWN_404_SECONDS)
+                    break
                 if err.retry and attempt == 0:
                     time.sleep(1.0)
                     continue
