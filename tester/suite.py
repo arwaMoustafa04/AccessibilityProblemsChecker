@@ -712,3 +712,31 @@ SUITE: list[TestCase] = [
     TestCase("T-25", t_language_and_title_repaired, ("COMP-REPAIR", "COMP-REVALIDATION"),
              ("AC-05", "AC-06"), phase=5),
 ]
+
+
+# --- Model coverage (course spec, Phase 5+): own-system runs only -------------------
+# The design requirements our team lists for the current milestone, and the tests that
+# evaluate each. coverage.model counts how many of them the suite evaluated. This is the
+# single source of the mapping; docs/model-coverage.md must match it (test_tester.py).
+DESIGN_VERSION = "Phase 2 design (requirements REQ-01 to REQ-17), Phase 5 milestone subset"
+MODEL_MAPPING_URL = ("https://github.com/arwaMoustafa04/AccessibilityProblemsChecker/blob/main/"
+                     "docs/model-coverage.md")
+MODEL_REQUIREMENTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "REQ-02": ("Reject unsupported input with a reason, including scanned PDFs",
+               ("T-06", "T-07", "T-08", "T-09", "T-10", "T-21", "T-22")),
+    "REQ-06": ("Never auto-fix issues that need human judgment",
+               ("T-13", "T-15", "T-16", "T-17", "T-18", "T-24")),
+    "REQ-07": ("Automatically repair auto-fixable issues", ("T-14", "T-25")),
+    "REQ-08": ("Re-validate after repair", ("T-14", "T-24", "T-25")),
+    "REQ-09": ("Report each repair's result and new issues", ("T-14", "T-24")),
+    "REQ-10": ("Keep human-review items unresolved, with enough information to locate and "
+               "understand them",
+               ("T-15", "T-16", "T-17", "T-18", "T-24")),
+    "REQ-11": ("Produce the output PDF and the report PDF", ("T-03", "T-04", "T-20")),
+    "REQ-12": ("Report lists checks, issues, repairs, review items and limitations",
+               ("T-13", "T-20", "T-23")),
+    "REQ-13": ("Tie findings, repairs and validation results to the exact PDF version",
+               ("T-03", "T-04", "T-14", "T-20")),
+    "REQ-16": ("Never crash; always a result or an explicit error", ("T-08", "T-11", "T-12")),
+    "REQ-17": ("Repair a copy, never the original", ("T-14", "T-20")),
+}

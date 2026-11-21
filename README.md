@@ -114,7 +114,7 @@ upload (see [`checks/README.md`](checks/README.md)); the image and structure che
   Missing/empty structure is `fail`; marker, relationship and header concerns are
   `needs_review`. Nested tables are inspected separately.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
-  and finding IDs in `human_review_items`. CHK-STRUCTURE provides rule-based suggestions only. CHK-NONTEXT can write AI-drafted alt text or mark an image as an artifact; its findings remain unresolved for human review.
+  and finding IDs in `human_review_items`. CHK-STRUCTURE provides rule-based suggestions only. CHK-NONTEXT offers AI-drafted alt text (or a decorative-image decision) as a suggestion; by default it is not written into the PDF, because REQ-06 and AC-04 say human-review issues are not changed automatically. `AI_WRITE_HUMAN_REVIEW_FIXES=true` writes it (Figure alt text or an artifact) once the pod and instructor agree to change REQ-06; the findings stay unresolved for human review either way.
 - CHK-TITLE and CHK-LANG findings are `auto_fixable` and are repaired automatically
   (next section); they become `fixed` or `repair_failed`. With `ENABLE_REPAIRS=false`
   they are reported as `detected` and the original PDF is returned byte-for-byte
@@ -138,12 +138,13 @@ before/after findings are matched by walking both files side by side
 | CHK-TITLE | `DisplayDocTitle` not set | Sets `ViewerPreferences/DisplayDocTitle` to true |
 | CHK-LANG | missing or invalid document language | Corrects a broken tag (`en_US` → `en-US`, `English` → `en`), else detects the language from the text (`langdetect`, offline), else assumes `en-US` and says so in `limitations` |
 | CHK-LANG | invalid passage language | Corrects the tag, or removes it so the passage uses the document language |
-| CHK-LINK | generic ("click here") or missing link label | Writes an accessible label to the annotation `/Contents` and the Link tag `/Alt` (visible text and target unchanged): an AI label from the sentence and destination host/path (never the query string) if an LLM is set up, else the stated purpose ("To apply for financial aid, click here" → "Apply for financial aid"), else the destination. Stays `needs_human_review` (`remediation/link.py`) |
+| CHK-LINK | generic ("click here") or missing link label | Suggests an accessible label (by default only as `suggested_text`, per REQ-06/AC-04; with `AI_WRITE_HUMAN_REVIEW_FIXES=true` it is written to the annotation `/Contents` and the Link tag `/Alt`, visible text and target unchanged): an AI label from the sentence and destination host/path (never the query string) if an LLM is set up, else the stated purpose ("To apply for financial aid, click here" → "Apply for financial aid"), else the destination. Stays `needs_human_review` (`remediation/link.py`) |
 | CHK-COLOR, CHK-SENSORY | instruction relying on color, shape, position or sound | **Suggestion only**, never written to the PDF: `suggested_text` is a rule-based rewrite ("Select the green button." → "Select the [button label].") or, with an LLM, an AI rewrite of up to 3 sentences per PDF, run after the real repairs (`remediation/wording.py`) |
 
 - **auto_fixable** findings become `fixed` or `repair_failed`. **human_review** findings
-  are never resolved automatically: a repair can be recorded for them (for example
-  AI-drafted alt text), but they stay `needs_human_review` (spec v0.5.0).
+  are never resolved automatically. By default nothing is written for them: AI drafts are
+  returned as suggestions (REQ-06, AC-04). With `AI_WRITE_HUMAN_REVIEW_FIXES=true` a repair
+  can be recorded for them (AI-drafted alt text), but they stay `needs_human_review`.
 - **AI text** (`method: "llm"`) is labeled "AI-generated, please verify" in the
   repairs and the report PDF, and `limitations` says the text was sent to an external
   model provider. If the LLM is missing, slow or fails, the rule-based fallback is used
@@ -235,6 +236,14 @@ Named files are the team's shared test set in `tester/fixtures/` (its README giv
 file's expected result); the no-file, corrupted and exact-size cases are generated in code.
 Tests for later phases report `skip` until `CURRENT_PHASE` in `tester/suite.py` reaches them.
 
+**Model coverage** (Phase 5+, course spec): when the tester runs against **our own
+system** it adds `coverage.model`: how many of the design requirements we list for this
+milestone (REQ-02, 06, 07, 08, 09, 10, 11, 12, 13, 16, 17) the suite evaluated. The
+requirement-to-test mapping is [`docs/model-coverage.md`](docs/model-coverage.md) (source:
+`MODEL_REQUIREMENTS` in `tester/suite.py`). "Own system" means the target URL is in
+`OWN_SYSTEM_URLS` (comma-separated; default `http://3.15.117.84/system`); for any other
+target, such as Team 3's system, `model` is left out, as the spec requires.
+
 **Code coverage** (reported by the system's `/test/report`) counts coverage.py
 statements of the service's modules (`main.py`, `pipeline.py`, `models.py`,
 `catalog.py`, `sessions.py`, `pdf_checks.py`, `checks/*.py`) that ran for the session:
@@ -262,8 +271,9 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
 - CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
   targets; these heuristics can miss issues or flag acceptable content.
-- **Repairs cover CHK-TITLE, CHK-LANG, bounded CHK-NONTEXT image repairs and CHK-LINK
-  accessible labels**; CHK-COLOR/CHK-SENSORY rewrites are suggestions only. A rule-based
+- **Repairs cover CHK-TITLE and CHK-LANG.** CHK-NONTEXT alt text, CHK-LINK labels and
+  CHK-COLOR/CHK-SENSORY rewrites are suggestions only by default (REQ-06, AC-04); image and
+  link text is written into the PDF only with `AI_WRITE_HUMAN_REVIEW_FIXES=true`. A rule-based
   title is only as good as page 1's largest heading or the file name, and a language
   detected from very little text is assumed (`en-US`) and flagged for review. An
   auto-fixable finding with no repair (e.g. veraPDF's `text_language_not_determinable`)

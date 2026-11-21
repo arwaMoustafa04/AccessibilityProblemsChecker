@@ -37,13 +37,14 @@ def setup_session() -> str:
 
 def check_report_format(report: dict) -> None:
     assert set(report) == {"session_id", "target_url", "results", "coverage"}
+    assert set(report["coverage"]) <= {"code", "component", "system", "model"}
     ids = [r["test_id"] for r in report["results"]]
     assert ids == [t.test_id for t in suite.SUITE]  # every planned test exactly once
     for r in report["results"]:
         assert r["outcome"] in {"pass", "fail", "error", "skip"} and r["message"]
         if r["outcome"] == "error":
             assert r["source"] in {"tester", "system", "communication", "unknown"}
-    for name in ("code", "component", "system"):
+    for name in [n for n in ("code", "component", "system", "model") if n in report["coverage"]]:
         c = report["coverage"][name]
         assert c["basis"]
         assert (c["covered"] is None and c["total"] is None) or 0 <= c["covered"] <= c["total"]
@@ -188,3 +189,37 @@ def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
     # All eight checks are registered, so full detection (T-13) passes too.
     assert set(outcomes.values()) == {"pass"}
+
+
+# --- coverage.model (course spec, Phase 5+): own system only ---------------------------
+
+def test_model_coverage_only_for_our_own_system(target, monkeypatch) -> None:
+    monkeypatch.setenv("OWN_SYSTEM_URLS", "http://3.15.117.84/system")
+    sid = setup_session()  # TARGET is not our deployed URL: a cross-team run
+    report = tester.post("/test/run", json={"session_id": sid}).json()
+    assert "model" not in report["coverage"]
+
+    monkeypatch.setenv("OWN_SYSTEM_URLS", f"http://3.15.117.84/system, {TARGET}/")
+    sid = setup_session()
+    report = tester.post("/test/run", json={"session_id": sid}).json()
+    check_report_format(report)
+    model = report["coverage"]["model"]
+    assert (model["covered"], model["total"]) == (len(suite.MODEL_REQUIREMENTS),) * 2
+    assert suite.DESIGN_VERSION in model["basis"] and suite.MODEL_MAPPING_URL in model["basis"]
+
+
+def test_own_system_url_matching() -> None:
+    import os
+    os.environ.pop("OWN_SYSTEM_URLS", None)
+    assert tester_app.is_own_system("http://3.15.117.84/system")
+    assert tester_app.is_own_system("HTTP://3.15.117.84/system/")
+    assert not tester_app.is_own_system("http://3.15.117.84/systems")
+    assert not tester_app.is_own_system("http://team3.example.edu/system")
+
+
+def test_model_mapping_names_real_tests_and_matches_the_docs() -> None:
+    planned = {t.test_id for t in suite.SUITE}
+    doc = (Path(__file__).resolve().parent.parent / "docs/model-coverage.md").read_text()
+    for req, (name, tests) in suite.MODEL_REQUIREMENTS.items():
+        assert tests and set(tests) <= planned, req
+        assert f"| {req} | {name} | {', '.join(tests)} |" in doc, f"docs out of date for {req}"

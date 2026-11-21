@@ -21,6 +21,9 @@ REAL_DESCRIBE_IMAGE = ai.describe_image
 @pytest.fixture(autouse=True)
 def offline(monkeypatch):
     monkeypatch.setattr(pipeline, "ENABLE_REPAIRS", True)
+    # These tests cover writing AI text into the PDF (needs instructor sign-off on REQ-06);
+    # the default, suggestion-only behaviour has its own test below.
+    monkeypatch.setenv("AI_WRITE_HUMAN_REVIEW_FIXES", "true")
     monkeypatch.setattr(ai, "describe_image", lambda *args: None)
     monkeypatch.setattr(ai, "suggest_title", lambda *args: None)
     monkeypatch.setattr(ai, "sends_data", lambda: False)
@@ -350,3 +353,24 @@ def test_untagged_pdf_image_repair_is_not_a_new_structure_issue(monkeypatch):
     assert any("still not fully tagged" in n for n in result.limitations)
     with pikepdf.open(io.BytesIO(out)) as pdf:
         assert "/StructTreeRoot" in pdf.Root and "/MarkInfo" not in pdf.Root  # never claims tagged
+
+
+@pytest.mark.parametrize("answer", ["A blue square used as an example figure.", ai.DECORATIVE])
+def test_default_ai_alt_text_is_a_suggestion_only(answer, monkeypatch) -> None:
+    """REQ-06 / AC-04: human-review issues are not changed automatically (the default)."""
+    monkeypatch.delenv("AI_WRITE_HUMAN_REVIEW_FIXES")
+    monkeypatch.setattr(ai, "describe_image", lambda *args: answer)
+    data = make_fixture("missing_alt")
+    result = pipeline.run_pipeline(data, "missing_alt.pdf")
+    nontext = [f for f in result.findings if f.check_id == "CHK-NONTEXT"]
+    assert nontext and all(f.status == "needs_human_review" for f in nontext)
+    assert not [r for r in result.repairs if r.finding_id in {f.finding_id for f in nontext}]
+    suggestion = nontext[0]
+    assert suggestion.suggestion_source == "llm"
+    assert suggestion.suggested_text == answer
+    assert any("suggestion only" in n for n in result.limitations)
+    # The image itself is untouched: no alt text, no artifact, in the returned PDF.
+    with pikepdf.open(io.BytesIO(base64.b64decode(result.output_pdf.content_base64))) as pdf:
+        figures = [o for o in pdf.objects
+                   if isinstance(o, pikepdf.Dictionary) and o.get("/S") == "/Figure"]
+        assert figures and all("/Alt" not in f for f in figures)

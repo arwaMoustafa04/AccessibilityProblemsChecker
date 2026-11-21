@@ -77,6 +77,9 @@ def offline(monkeypatch):
     monkeypatch.setenv("VERAPDF_ENABLED", "false")
     monkeypatch.setenv("LLM_ENABLED", "false")
     monkeypatch.setattr("pipeline.ENABLE_REPAIRS", True)
+    # These tests cover writing labels into the PDF (needs instructor sign-off on REQ-06);
+    # the default, suggestion-only behaviour has its own test below.
+    monkeypatch.setenv("AI_WRITE_HUMAN_REVIEW_FIXES", "true")
 
 
 def links_of(result):
@@ -215,3 +218,18 @@ def test_fallback_labels_and_destination_hints():
     with pikepdf.open(io.BytesIO(fixture(links=True))) as pdf:
         annot = pdf.pages[0].Annots[0]
         assert destination_hint(annot, {}) == "school.edu/aid"
+
+
+def test_default_link_labels_are_suggestions_only(monkeypatch):
+    """REQ-06 / AC-04: human-review issues are not changed automatically (the default)."""
+    monkeypatch.delenv("AI_WRITE_HUMAN_REVIEW_FIXES")
+    original = fixture(links=True)
+    result = process(original)
+    links = links_of(result)
+    assert [f["suggested_text"] for f in links] == ["Apply for financial aid",
+                                                   "Register for orientation"]
+    assert all(f["status"] == "needs_human_review" for f in links)
+    assert not [r for r in result["repairs"] if r["finding_id"] in {f["finding_id"] for f in links}]
+    assert any("suggestions only" in n for n in result["limitations"])
+    with pikepdf.open(io.BytesIO(artifact(result, "output_pdf"))) as pdf:
+        assert all("/Contents" not in a for a in pdf.pages[0].Annots)  # labels not written

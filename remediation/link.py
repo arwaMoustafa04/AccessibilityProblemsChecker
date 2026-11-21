@@ -9,6 +9,10 @@ sentence ("To apply for financial aid, click here" -> "Apply for financial aid")
 the destination host/path or page. Only the host and path are sent to the model,
 never the query string.
 
+By default the label is only suggested (Finding.suggested_text): REQ-06 and AC-04 say
+human-review issues are not changed automatically. With AI_WRITE_HUMAN_REVIEW_FIXES=true
+(after the pod and instructor agree to change REQ-06) it is written into the PDF.
+
 Re-validation re-runs CHK-LINK on the saved copy; the repair passes when the link no
 longer has a generic or missing label. The finding stays needs_human_review: a
 person must confirm the wording (spec v0.5.0).
@@ -70,9 +74,20 @@ def label_link(issue: Issue, rctx: RepairContext) -> RepairAction | None:
     if not text:
         text = issue.suggested_text or fallback_label(context, hint)
 
-    if "link_tags" not in rctx.shared:
-        rctx.shared["link_tags"] = link_tags(rctx.check)
-    tag = rctx.shared["link_tags"].get(annot.objgen)  # type: ignore[union-attr]
+    if not ai.writes_human_review_fixes():
+        # REQ-06 / AC-04: a human-review issue is not changed automatically. The label
+        # is offered as the finding's suggestion; a person decides whether to apply it.
+        issue.suggested_text, issue.suggestion_source = text, method  # type: ignore[assignment]
+        rctx.note("CHK-LINK: suggested link labels are given as suggestions only; "
+                  "human-review issues are not changed automatically, so a person must "
+                  "review and apply them.")
+        return None
+
+    tags = rctx.shared.get("link_tags")
+    if not isinstance(tags, dict):  # computed once per document
+        tags = link_tags(rctx.check)
+        rctx.shared["link_tags"] = tags
+    tag = tags.get(annot.objgen)
     annot.Contents = pikepdf.String(text)
     if tag is not None:
         tag.Alt = pikepdf.String(text)

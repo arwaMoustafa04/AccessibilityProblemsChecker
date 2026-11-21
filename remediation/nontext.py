@@ -345,6 +345,15 @@ def repair_image(issue: Issue, rctx: RepairContext) -> RepairAction | None:
             
         )
         return None
+    if not ai.writes_human_review_fixes():
+        # REQ-06 / AC-04: a human-review issue is not changed automatically. The AI draft
+        # is offered as the finding's suggestion; a person decides whether to apply it.
+        issue.suggested_text = text  # ai.DECORATIVE: "mark it as an artifact" (UI label)
+        issue.suggestion_source = "llm"
+        rctx.note("CHK-NONTEXT: AI-drafted alt text is given as a suggestion only "
+                  "(AI-generated, please verify); human-review issues are not changed "
+                  "automatically, so a person must review and apply it.")
+        return None
     try:
         if text == ai.DECORATIVE:
             _artifact(use, figure, inventory)

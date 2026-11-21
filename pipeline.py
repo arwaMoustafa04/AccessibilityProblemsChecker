@@ -342,11 +342,13 @@ def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool,
                      "findings are reported as detected and the PDF is returned unchanged.")
     else:
         notes.append("Automatic repair covers CHK-TITLE (title, XMP title, DisplayDocTitle) "
-                     "and CHK-LANG (document and passage language), plus AI-drafted Figure alt text "
-                     "and decorative-image artifacts for CHK-NONTEXT and accessible labels for "
-                     "generic or unlabeled CHK-LINK links. CHK-COLOR and CHK-SENSORY rewrites are "
-                     "suggestions only; the PDF's visible text is never changed. Repairs are made "
-                     "on a copy and re-validated by running every check again.")
+                     "and CHK-LANG (document and passage language)"
+                     + (", plus AI-drafted Figure alt text and decorative-image artifacts for "
+                        "CHK-NONTEXT and accessible labels for generic or unlabeled CHK-LINK "
+                        "links" if ai.writes_human_review_fixes() else "")
+                     + ". CHK-COLOR and CHK-SENSORY rewrites are suggestions only; the PDF's "
+                       "visible text is never changed. Repairs are made on a copy and "
+                       "re-validated by running every check again.")
         if unrepaired_fixable:
             notes.append(f"{unrepaired_fixable} auto-fixable finding(s) have no automatic "
                          "repair yet and are reported as detected.")

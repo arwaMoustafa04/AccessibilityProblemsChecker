@@ -10,6 +10,7 @@ Reports are kept in memory until this tester instance stops.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -26,13 +27,16 @@ from pydantic import BaseModel, ConfigDict, Field
 SETUP_TIMEOUT_SECONDS = 10.0
 REPORT_TIMEOUT_SECONDS = 10.0
 SOURCES = {"tester", "system", "communication", "unknown"}
+# Our own system's base URL(s). coverage.model is reported only for these targets
+# (course spec: include it for same-team runs, omit it from cross-team reports).
+DEFAULT_OWN_SYSTEM_URLS = "http://3.15.117.84/system"
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("pdf-tester")
 
-app = FastAPI(title="Team 1 Tester", version="0.3.0",
-              description="Runs Team 1's test suite against a pod system (shared spec v0.3.0).")
+app = FastAPI(title="Team 1 Tester", version="0.5.0",
+              description="Runs Team 1's test suite against a pod system (shared spec v0.5.0).")
 
 
 def make_client() -> httpx.Client:
@@ -70,10 +74,22 @@ async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
 
 # --- Sessions --------------------------------------------------------------------
 
+def _normalized(url: str) -> str:
+    parts = urlsplit(url.strip())
+    return f"{parts.scheme.lower()}://{(parts.netloc or '').lower()}{parts.path.rstrip('/')}"
+
+
+def is_own_system(target_url: str) -> bool:
+    """True when the target is Team 1's own system (OWN_SYSTEM_URLS, comma-separated)."""
+    own = os.environ.get("OWN_SYSTEM_URLS", DEFAULT_OWN_SYSTEM_URLS)
+    return _normalized(target_url) in {_normalized(u) for u in own.split(",") if u.strip()}
+
+
 class Session:
     def __init__(self, session_id: str, target_url: str):
         self.session_id = session_id
         self.target_url = target_url
+        self.own_system = is_own_system(target_url)
         self.state: Literal["ready", "running", "ended"] = "ready"
         self.report: dict | None = None
 
@@ -174,10 +190,21 @@ def _code_coverage(client: httpx.Client, session: Session) -> dict:
     return {"covered": covered, "total": total, "basis": f"System-measured: {basis}"}
 
 
-def _coverage(executed: list[suite.TestCase], code: dict) -> dict:
+def _model_coverage(executed: list[suite.TestCase]) -> dict:
+    ran = {t.test_id for t in executed}
+    covered = [req for req, (_, tests) in suite.MODEL_REQUIREMENTS.items() if ran & set(tests)]
+    return {
+        "covered": len(covered), "total": len(suite.MODEL_REQUIREMENTS),
+        "basis": f"Design requirements for this milestone ({suite.DESIGN_VERSION}: "
+                 f"{', '.join(suite.MODEL_REQUIREMENTS)}) evaluated by tests that received a "
+                 f"response. Requirement-to-test mapping: {suite.MODEL_MAPPING_URL}",
+    }
+
+
+def _coverage(executed: list[suite.TestCase], code: dict, own_system: bool = False) -> dict:
     components = {c for t in executed for c in t.components}
     criteria = {a for t in executed for a in t.criteria}
-    return {
+    coverage = {
         "code": code,
         "component": {
             "covered": len(components), "total": len(suite.COMPONENTS),
@@ -190,6 +217,9 @@ def _coverage(executed: list[suite.TestCase], code: dict) -> dict:
                      "exercised by tests that received a response",
         },
     }
+    if own_system:  # same-team runs only; omitted from cross-team reports
+        coverage["model"] = _model_coverage(executed)
+    return coverage
 
 
 def _report(session: Session, results: list[dict], coverage: dict) -> dict:
@@ -253,7 +283,8 @@ def test_run(body: RunBody):
                 code = {"covered": None, "total": None,
                         "basis": "Source lines; not retrieved because the tester aborted"}
                 with _lock:
-                    session.report = _report(session, results, _coverage(responded, code))
+                    session.report = _report(session, results,
+                                             _coverage(responded, code, session.own_system))
                     session.state = "ended"
                 return error(500, f"Tester aborted during {case.test_id}; "
                                   "retrieve the partial report from /test/report.")
@@ -261,7 +292,7 @@ def test_run(body: RunBody):
     finally:
         client.close()
 
-    report = _report(session, results, _coverage(responded, code))
+    report = _report(session, results, _coverage(responded, code, session.own_system))
     with _lock:
         session.report = report
         session.state = "ended"

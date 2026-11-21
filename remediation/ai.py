@@ -133,6 +133,17 @@ def rewrite_sentence(sentence: str, problem: str) -> str | None:
     return text if text and text.strip().lower() != sentence.strip().lower() else None
 
 
+def writes_human_review_fixes() -> bool:
+    """May text be written into the PDF for human-review findings (alt text, link labels)?
+
+    Off by default: REQ-06 and AC-04 (Phase 2) say human-review issues are not changed
+    automatically, so AI text is returned only as a suggestion (Finding.suggested_text,
+    suggestion_source "llm"). Spec v0.5.0 allows writing it ("may"); turn this on with
+    AI_WRITE_HUMAN_REVIEW_FIXES=true only once the pod and instructor agree to change REQ-06.
+    """
+    return os.environ.get("AI_WRITE_HUMAN_REVIEW_FIXES", "").lower() in ("1", "true", "yes")
+
+
 def sends_data() -> bool:
     """True when AI calls go to an external provider (configured, not mock mode)."""
     client = _client()

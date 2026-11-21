@@ -60,7 +60,8 @@ jobs:
 
       - name: Full tester suite against the running system
         run: |
-          (cd tester && uvicorn app:app --port 8002 --no-access-log > ../tester.log 2>&1 &)
+          # The local system counts as our own, so the report must include coverage.model.
+          (cd tester && OWN_SYSTEM_URLS=http://localhost:8001 uvicorn app:app --port 8002 --no-access-log > ../tester.log 2>&1 &)
           for i in $(seq 1 20); do curl -fs -o /dev/null http://localhost:8002/docs && break; sleep 1; done
           SID=$(curl -fs -X POST localhost:8002/test/setup -H 'content-type: application/json' \
                 -d '{"target_url":"http://localhost:8001"}' | python -c 'import sys,json;print(json.load(sys.stdin)["session_id"])')
@@ -71,8 +72,9 @@ jobs:
           r = json.load(open("report.json"))
           for t in r["results"]:
               print(t["test_id"], t["outcome"], "-", t["message"])
+          print("coverage:", {k: (v["covered"], v["total"]) for k, v in r["coverage"].items()})
           bad = [t for t in r["results"] if t["outcome"] in ("fail", "error")]
-          sys.exit(1 if bad else 0)
+          sys.exit(1 if bad or "model" not in r["coverage"] else 0)
           PY
 
       - name: Service logs
