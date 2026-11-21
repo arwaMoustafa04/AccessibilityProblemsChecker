@@ -2,9 +2,6 @@
 
 Team 1 (West Lafayette, Pod D) implementation of the pod's shared PDF accessibility
 service for the **ADA Title II Digital Accessibility Rule** (28 CFR §35.200, WCAG 2.1 AA).
-<<<<<<< HEAD
-This README describes the Phase 3 interface plus the implemented accessibility checks.
-=======
 `POST /process` runs all eight agreed checks, registered in `checks/__init__.py`:
 non-text content and structure (`pdf_checks.py`), sensory, color and link
 (Person 2), and title, language and headings (Person 3). **Phase 5 (in progress):**
@@ -16,7 +13,6 @@ is deployed.
 See [`checks/README.md`](checks/README.md) for each check, and
 [Person 2 fixtures and tests](test_fixtures/person2/README.md) for the sensory,
 color and link rules.
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 
 ## Deployed services
 
@@ -87,15 +83,11 @@ Course test endpoints:
   `compliance_statement` ("This report does not certify ADA Title II or WCAG 2.1
   conformance."), `output_pdf` and `report_pdf` (file name, media type, SHA-256,
   `modified`, Base64 content).
-<<<<<<< HEAD
-- **Finding / Repair / Location**: check results and locations; a link label edit creates a repair record while its wording awaits review.
-=======
 - **Finding / Repair / Location**: check results and locations. Optional (spec v0.5.0):
   `Finding.suggested_text` and `suggestion_source` (`rule` or `llm`) give the concrete
   proposed text; `Repair.method` (`rule` or `llm`) and `applied_text` say what was written.
   `Location.bbox` (optional, nullable) is `[x0, y0, x1, y1]` on `page` in PDF user space, so a
   viewer can highlight the finding; `checks/locate.py` fills it where the position is known.
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 - **Error**: `{"status": "error", "error_code", "message"}` with codes `MISSING_FILE`,
   `INVALID_FILE_TYPE`, `FILE_TOO_LARGE`, `CORRUPTED_PDF`, `UNREADABLE_PDF`,
   `ENCRYPTED_PDF`, `PASSWORD_PROTECTED_PDF`, `NO_TEXT_LAYER`, `INVALID_REQUEST` (an `output` value other than
@@ -104,13 +96,8 @@ Course test endpoints:
 
 ### What `/process` does now
 
-<<<<<<< HEAD
-The interface and upload validation are complete. Image, structure, link, color, and sensory checks
-run on every upload; the remaining checks are incomplete or disabled.
-=======
 The interface and upload validation are complete. All eight checks run on every
 upload (see [`checks/README.md`](checks/README.md)); the image and structure checks are:
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 
 - **Input validation is complete:** no file → 400 `MISSING_FILE`; over 20 MB
   (20,971,520 bytes) → 413 `FILE_TOO_LARGE`; no `%PDF-` header in the first 1024 bytes
@@ -127,36 +114,6 @@ upload (see [`checks/README.md`](checks/README.md)); the image and structure che
   Missing/empty structure is `fail`; marker, relationship and header concerns are
   `needs_review`. Nested tables are inspected separately.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
-<<<<<<< HEAD
-  and finding IDs in `human_review_items`. They never trigger repairs. The original
-  PDF is returned byte-for-byte unchanged unless a link label or title/language repair is applied.
-  JSON and report PDF include performed checks, findings, locations and limitations.
-- Title/language detection and repair remain opt-in via `ENABLE_TITLE_LANG_CHECKS=true`.
-  `checks_performed` lists only enabled checks; disabled checks appear in limitations.
-- PDFs are processed in memory and never stored.
-
-### Link labels and wording suggestions
-
-CHK-LINK matches generic visible wording to PDF link annotations. It writes a label onto
-the output copy (annotation `/Contents` and associated Link structure element `/Alt`
-where available), then verifies it by reopening the saved PDF. Visible text and destinations
-are preserved. The finding stays open for human review, including screen-reader testing
-for annotation-only links.
-
-CHK-COLOR and CHK-SENSORY identify English instructions that rely on color or a sensory cue
-such as position, shape, size, or sound. Findings include the source sentence and suggested
-rewrite in the JSON, finding card and PDF report. Applying sentence edits is the author's
-decision. Wording detection uses extractable text and common English instruction patterns.
-Pages with no extractable text are listed under limitations.
-
-Set `OPENAI_API_KEY` on the backend to enable the OpenAI Responses API. `OPENAI_MODEL`
-defaults to `gpt-4.1-mini`. Requests batch up to 32 candidates with short excerpts and
-destination hints (host/path or internal page), with response storage disabled. The service
-uses local fallback templates when its 20-second AI budget expires, for missing credentials, timeouts and
-unusable suggestions. Fallback labels use an action or destination when available and
-otherwise say “Open linked destination.” Bracketed identifiers in rewrite drafts need an
-author to supply the actual name. Review the source shown next to each suggestion.
-=======
   and finding IDs in `human_review_items`. CHK-STRUCTURE provides rule-based suggestions only. CHK-NONTEXT can write AI-drafted alt text or mark an image as an artifact; its findings remain unresolved for human review.
 - CHK-TITLE and CHK-LANG findings are `auto_fixable` and are repaired automatically
   (next section); they become `fixed` or `repair_failed`. With `ENABLE_REPAIRS=false`
@@ -181,6 +138,8 @@ before/after findings are matched by walking both files side by side
 | CHK-TITLE | `DisplayDocTitle` not set | Sets `ViewerPreferences/DisplayDocTitle` to true |
 | CHK-LANG | missing or invalid document language | Corrects a broken tag (`en_US` → `en-US`, `English` → `en`), else detects the language from the text (`langdetect`, offline), else assumes `en-US` and says so in `limitations` |
 | CHK-LANG | invalid passage language | Corrects the tag, or removes it so the passage uses the document language |
+| CHK-LINK | generic ("click here") or missing link label | Writes an accessible label to the annotation `/Contents` and the Link tag `/Alt` (visible text and target unchanged): an AI label from the sentence and destination host/path (never the query string) if an LLM is set up, else the stated purpose ("To apply for financial aid, click here" → "Apply for financial aid"), else the destination. Stays `needs_human_review` (`remediation/link.py`) |
+| CHK-COLOR, CHK-SENSORY | instruction relying on color, shape, position or sound | **Suggestion only**, never written to the PDF: `suggested_text` is a rule-based rewrite ("Select the green button." → "Select the [button label].") or, with an LLM, an AI rewrite of up to 3 sentences per PDF, run after the real repairs (`remediation/wording.py`) |
 
 - **auto_fixable** findings become `fixed` or `repair_failed`. **human_review** findings
   are never resolved automatically: a repair can be recorded for them (for example
@@ -206,8 +165,8 @@ before/after findings are matched by walking both files side by side
 Every LLM call goes through `llm.py` (via `remediation/ai.py`), using an
 OpenAI-compatible API: by default OpenRouter's free `google/gemma-4-26b-a4b-it:free`,
 falling back to `nvidia/nemotron-3.5-super-vl:free`. Functions: `suggest_title`
-(used now), `describe_image` (used for image repairs), `suggest_link_text` and `rewrite_sentence` (ready for
-the CHK-NONTEXT, CHK-LINK, CHK-COLOR and CHK-SENSORY repairs and suggestions).
+(CHK-TITLE), `describe_image` (CHK-NONTEXT image repairs), `suggest_link_text` (CHK-LINK
+labels) and `rewrite_sentence` (CHK-COLOR / CHK-SENSORY suggested rewrites).
 
 - **No key, no AI:** without `LLM_API_KEY` every call returns nothing and the
   rule-based fallbacks are used, so CI and the tests never need an LLM. `LLM_MOCK=true`
@@ -229,7 +188,6 @@ the CHK-NONTEXT, CHK-LINK, CHK-COLOR and CHK-SENSORY repairs and suggestions).
 Environment variables: `ENABLE_REPAIRS=false` switches repair off (Phase 4 behaviour);
 `LLM_ENABLED=false` switches the AI suggestions off (rule-based fallbacks only); every
 `LLM_*` setting is listed at the top of `llm.py`.
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 
 ## Tester (`tester/` folder)
 
@@ -302,15 +260,10 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
   is not treated as a Figure `/Alt` replacement. Malformed/cyclic data produces review
   findings for incomplete inspection. Tree depth over 128, more than 100,000 structure
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
-<<<<<<< HEAD
-- CHK-HEADINGS is unimplemented. Title/language
-  detection and repair remain behind `ENABLE_TITLE_LANG_CHECKS` (off by default).
-- **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
-  conformance; a person must confirm the meaning of proposed and applied wording.
-=======
 - CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
   targets; these heuristics can miss issues or flag acceptable content.
-- **Repairs cover CHK-TITLE, CHK-LANG and bounded CHK-NONTEXT image repairs** (Phase 5 in progress). A rule-based
+- **Repairs cover CHK-TITLE, CHK-LANG, bounded CHK-NONTEXT image repairs and CHK-LINK
+  accessible labels**; CHK-COLOR/CHK-SENSORY rewrites are suggestions only. A rule-based
   title is only as good as page 1's largest heading or the file name, and a language
   detected from very little text is assumed (`en-US`) and flagged for review. An
   auto-fixable finding with no repair (e.g. veraPDF's `text_language_not_determinable`)
@@ -328,7 +281,6 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
   password (agreed spec behavior).
 - **Not a compliance certification.** Results never certify ADA Title II / WCAG 2.1
   conformance; human-review items are never resolved automatically.
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 - **Sessions are in memory** (system and tester): they are lost when a service
   restarts, and system coverage measurement handles one measured request at a time.
 - **HTTP only, no authentication**, single small EC2 instance: no HTTPS certificate,

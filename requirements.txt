@@ -7,9 +7,4 @@ pikepdf==10.13.0.post1
 pymupdf==1.28.2
 reportlab==5.0.1
 coverage==7.16.2
-<<<<<<< HEAD
-pdfminer.six==20260107
-httpx==0.28.1
-=======
 langdetect==1.0.9
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a

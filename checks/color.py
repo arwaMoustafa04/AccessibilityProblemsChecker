@@ -3,7 +3,15 @@
 import re
 
 from checks.base import CheckContext, Issue
-from checks.review_text import ACTION, COLOR_WORD, blocks, excerpt
+from checks.review_text import (
+    ACTION,
+    COLOR_CUE,
+    COLOR_WORD,
+    blocks,
+    cue_sentence,
+    excerpt,
+    rewrite_draft,
+)
 
 CHECK_ID = "CHK-COLOR"
 MEANING = re.compile(
@@ -21,7 +29,7 @@ def check(ctx: CheckContext) -> list[Issue]:
     issues = []
     for page_number, index, text in blocks(ctx):
         if COLOR_WORD.search(text) and (ACTION.search(text) or MEANING.search(text)):
-            issues.append(Issue(
+            issue = Issue(
                 CHECK_ID, "color_cue_needs_review",
                 f'Color may convey information in "{excerpt(text)}". '
                 "Check whether labels, symbols or patterns convey the same information.",
@@ -29,7 +37,14 @@ def check(ctx: CheckContext) -> list[Issue]:
                 object_ref=f"Page[{page_number}]/TextBlock[{index}]",
                 suggestion="Provide a non-color cue for each status, instruction or category.",
                 sources=["PyMuPDF"],
-            ))
+            )
+            draft = rewrite_draft(text, COLOR_CUE)
+            if draft:  # a suggestion for the author; the PDF text is never changed
+                issue.evidence, issue.suggested_text = draft
+                issue.suggestion_source = "rule"
+            else:
+                issue.evidence = cue_sentence(text, COLOR_WORD)
+            issues.append(issue)
     # Colored text alone is not a failure. Multiple chromatic drawing colors can
     # indicate a chart/legend but can also be decorative: always needs_review.
     for page_index in range(len(ctx.doc)):

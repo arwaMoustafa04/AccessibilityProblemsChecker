@@ -41,6 +41,11 @@ AI image repairs (CHK-NONTEXT) show the alt text written to the PDF ("Alt text w
 PDF", with the "AI-generated, please verify" badge), or "AI-suggested alt text (not
 applied)" when it could not be written. Rule-based guidance that repeats the suggested
 fix (CHK-NONTEXT, CHK-STRUCTURE) is shown once.
+Link repairs (CHK-LINK) show the accessible label written to the PDF ("Link label written
+to PDF"; the visible link text is unchanged). CHK-COLOR and CHK-SENSORY show a "Suggested
+rewrite" of the flagged sentence (rule-based with a bracketed placeholder such as
+`[button label]`, or "AI-suggested rewrite" with the AI badge); rewrites are never applied
+to the PDF.
 
 ## Screens
 

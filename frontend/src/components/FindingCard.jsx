@@ -20,13 +20,21 @@ export default function FindingCard({ finding, repair, scanned = false, selected
   const written = repair?.applied_text != null
   // CHK-NONTEXT: the AI answered "DECORATIVE", so the image was marked as an artifact.
   const decorative = finding.check_id === 'CHK-NONTEXT' && suggestedText?.trim() === 'DECORATIVE'
+  const ai = finding.suggestion_source === 'llm'
+  // CHK-COLOR / CHK-SENSORY: a rewritten instruction for the author; the PDF text is never changed.
+  const rewrite = finding.check_id === 'CHK-COLOR' || finding.check_id === 'CHK-SENSORY'
+  const placeholder = rewrite && /\[[^\]]+\]/.test(suggestedText ?? '')
   const suggestedLabel = decorative
     ? (written ? 'Image marked as decorative' : 'AI judged the image decorative (not applied)')
     : written
-    ? (finding.check_id === 'CHK-NONTEXT' ? 'Alt text written to PDF' : 'Text written to PDF')
-    : finding.suggestion_source === 'llm'
-      ? (finding.check_id === 'CHK-NONTEXT' ? 'AI-suggested alt text (not applied)' : 'AI suggestion (not applied)')
-      : 'Suggested text'
+    ? ({ 'CHK-NONTEXT': 'Alt text written to PDF', 'CHK-LINK': 'Link label written to PDF' }[finding.check_id]
+      ?? 'Text written to PDF')
+    : rewrite
+      ? (ai ? 'AI-suggested rewrite' : 'Suggested rewrite')
+    : ai
+      ? ({ 'CHK-NONTEXT': 'AI-suggested alt text (not applied)', 'CHK-LINK': 'AI-suggested link label (not applied)' }[finding.check_id]
+        ?? 'AI suggestion (not applied)')
+      : finding.check_id === 'CHK-LINK' ? 'Suggested link label' : 'Suggested text'
 
   return (
     <article
@@ -78,7 +86,18 @@ export default function FindingCard({ finding, repair, scanned = false, selected
               {decorative
                 ? <span>Decorative, so screen readers skip it (tagged as an Artifact, no alt text)</span>
                 : <q>{suggestedText}</q>}
-              {finding.suggestion_source === 'llm' && <AiBadge />}
+              {ai && <AiBadge />}
+              {rewrite && (
+                <span className="muted repair-note">
+                  {' '}Not applied: edit the sentence in your source document
+                  {placeholder ? ', replacing the bracketed text with the actual name' : ''}.
+                </span>
+              )}
+              {written && finding.check_id === 'CHK-LINK' && (
+                <span className="muted repair-note">
+                  {' '}Screen readers announce this label; the visible link text is unchanged.
+                </span>
+              )}
             </dd>
           </div>
         )}

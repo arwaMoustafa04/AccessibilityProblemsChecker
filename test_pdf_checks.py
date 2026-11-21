@@ -47,19 +47,12 @@ def test_endpoint_review_contract(case):
     assert response.status_code == 200
     body = response.json()
     findings = body["findings"]
-<<<<<<< HEAD
-    assert [f["issue_type"] for f in findings] == EXPECTED[case]
-    assert body["checks_performed"] == [
-        "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
-    assert body["human_review_items"] == [f["finding_id"] for f in findings]
-=======
     # The fixtures have no title or language, so other checks report those too.
     mine = [f for f in findings if f["check_id"] in {"CHK-NONTEXT", "CHK-STRUCTURE"}]
     assert [f["issue_type"] for f in mine] == EXPECTED[case]
     assert {"CHK-NONTEXT", "CHK-STRUCTURE"} <= set(body["checks_performed"])
     assert body["human_review_items"] == [
         f["finding_id"] for f in findings if f["classification"] == "human_review"]
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     assert all(f["classification"] == "human_review" and f["status"] == "needs_human_review"
                and f["fix_description"] for f in mine)
     for finding in mine:

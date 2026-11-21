@@ -329,3 +329,24 @@ def test_check_broken_only_by_repair_discards_repairs(monkeypatch) -> None:
     result = pipeline.run_pipeline(data, "accessibilityIssues.pdf")
     assert result.repairs == [] and not result.output_pdf.modified
     assert any("repairs were discarded" in n for n in result.limitations)
+
+
+def test_untagged_pdf_image_repair_is_not_a_new_structure_issue(monkeypatch):
+    # No structure tree at all: the image repair adds a lone Figure tag, so the
+    # re-check says "not marked" instead of "no structure tree". Same problem, not new.
+    monkeypatch.setattr(ai, "describe_image", lambda *args: "Blue square example")
+    with pikepdf.open(io.BytesIO(make_fixture("untagged_image"))) as pdf:
+        for key in ("/StructTreeRoot", "/MarkInfo"):
+            del pdf.Root[key]
+        for page in pdf.pages:
+            if "/StructParents" in page.obj:
+                del page.obj.StructParents
+        data = save(pdf)
+    result, out = repaired(data)
+    assert any(r.method == "llm" and r.validation_result == "passed" for r in result.repairs)
+    assert not any(f.issue_type == "document_not_marked" for f in result.new_issues_after_repair)
+    structure = [f for f in result.findings if f.issue_type == "missing_document_structure"]
+    assert structure and structure[0].status == "needs_human_review"
+    assert any("still not fully tagged" in n for n in result.limitations)
+    with pikepdf.open(io.BytesIO(out)) as pdf:
+        assert "/StructTreeRoot" in pdf.Root and "/MarkInfo" not in pdf.Root  # never claims tagged

@@ -63,7 +63,6 @@ class Inspector:
         self.roles: Any = pikepdf.Dictionary()
         self.content: dict[tuple, str] = {}
         self.objects: dict[tuple, str] = {}
-        self.link_tags: dict[tuple, Any] = {}
         self.figures: dict[str, Any] = {}
         self.seen: set[tuple] = set()
         self.nodes = 0
@@ -98,7 +97,7 @@ class Inspector:
 
     def walk(self, node: Any, path: str, page: int | None, figure: str | None,
              stream: tuple = (0, 0), table: dict | None = None,
-             parent: Any = None, depth: int = 0, link: Any = None):
+             parent: Any = None, depth: int = 0):
         self.nodes += 1
         if depth > 128 or self.nodes > 100_000:
             self.malformed(path, page)
@@ -135,8 +134,6 @@ class Inspector:
         if kind == "/OBJR":
             if not _dict(node.get("/Obj")):
                 self.malformed(path, page)
-            elif link is not None:
-                self.link_tags[_identity(node.Obj)] = link
             elif figure:
                 self.objects[page, _identity(node.Obj)] = figure
             return
@@ -148,8 +145,6 @@ class Inspector:
                 or (role == "/TR" and parent_role not in ("/Table", "/THead", "/TBody", "/TFoot"))
                 or (parent_role == "/Table" and role not in ("/TR", "/THead", "/TBody", "/TFoot"))):
             self.malformed(path, page)
-        if role == "/Link":
-            link = node
         if role == "/Figure":
             figure = path
             self.figures[path] = node
@@ -170,7 +165,7 @@ class Inspector:
                 table["headers"] += 1
         children = _children(node.get("/K"))
         for n, child in enumerate(children):
-            self.walk(child, f"{path}/K[{n}]", page, figure, stream, table, node, depth + 1, link)
+            self.walk(child, f"{path}/K[{n}]", page, figure, stream, table, node, depth + 1)
         if role == "/Table" and table and table["data"] and not table["headers"]:
             self.add("CHK-STRUCTURE", "table_missing_headers", path,
                      "Tagged table contains data cells but no header cells; review table relationships", page)

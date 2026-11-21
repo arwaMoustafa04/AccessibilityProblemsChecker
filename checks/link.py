@@ -1,6 +1,7 @@
 """CHK-LINK / WCAG 2.4.4: review annotation labels without visiting targets."""
 
 import re
+from urllib.parse import unquote, urlsplit
 
 import pikepdf
 import pymupdf
@@ -18,19 +19,92 @@ def _label(obj) -> str:
                  if str(obj.get(k, "")).strip()), "")
 
 
-def _tag_labels(ctx: CheckContext) -> dict[tuple[int, int], str]:
-    """Associate explicit Link alternative text only with its referenced annotation."""
-    labels = {}
+def link_tags(ctx: CheckContext) -> dict[tuple[int, int], pikepdf.Dictionary]:
+    """Annotation (objgen) -> the Link structure element that references it via OBJR."""
+    tags = {}
     for elem in iter_elements(ctx):
-        if elem.tag != "/Link" or not _label(elem.obj):
+        if elem.tag != "/Link":
             continue
         kids = elem.obj.get("/K")
         for child in kids if isinstance(kids, pikepdf.Array) else [kids]:
             if isinstance(child, pikepdf.Dictionary) and child.get("/Type") == pikepdf.Name.OBJR:
                 obj = child.get("/Obj")
                 if isinstance(obj, pikepdf.Dictionary) and obj.objgen != (0, 0):
-                    labels[obj.objgen] = _label(elem.obj)
-    return labels
+                    tags[obj.objgen] = elem.obj
+    return tags
+
+
+def _tag_labels(ctx: CheckContext) -> dict[tuple[int, int], str]:
+    """Associate explicit Link alternative text only with its referenced annotation."""
+    return {objgen: _label(tag) for objgen, tag in link_tags(ctx).items() if _label(tag)}
+
+
+# --- Context and rule-based labels (suggested_text, and the CHK-LINK repair) ---------
+
+_PURPOSE = re.compile(r"\b[Tt]o ([\w '-]{3,70}),\s*(?:please\s+)?(?:click|tap|select)(?: here)?\b")
+
+
+def link_rect(page: pymupdf.Page, annot: pikepdf.Dictionary) -> pymupdf.Rect:
+    """The annotation rectangle in PyMuPDF page coordinates (raises if unreadable)."""
+    rect = pymupdf.Rect([float(v) for v in annot["/Rect"]]) * page.transformation_matrix
+    if rect.is_empty or rect.is_infinite:
+        raise ValueError("invalid rectangle")
+    return rect
+
+
+def link_context(page: pymupdf.Page, rect: pymupdf.Rect, visible: str) -> str:
+    """The sentence around a link (else its text block), so a label can state its purpose."""
+    area = pymupdf.Rect(rect.x0 - 2, rect.y0 - 2, rect.x1 + 2, rect.y1 + 2)
+    needle = visible.casefold().strip()
+    for block in page.get_text("blocks"):
+        if (len(block) > 6 and block[6] != 0) or not pymupdf.Rect(block[:4]).intersects(area):
+            continue
+        text = " ".join(str(block[4]).split())
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            if needle and needle in sentence.casefold():
+                return sentence[:400]
+        return text[:400]
+    return ""
+
+
+def destination_hint(annot: pikepdf.Dictionary, page_numbers: dict) -> str:
+    """Where the link goes, without query strings: "host/path", "page N", or ""."""
+    action = annot.get("/A")
+    dest = annot.get("/Dest")
+    if isinstance(action, pikepdf.Dictionary):
+        dest = action.get("/D", dest)
+        if action.get("/S") == pikepdf.Name.URI:
+            try:
+                uri = urlsplit(str(action.get("/URI", "")))
+                if uri.scheme.lower() in {"http", "https"} and uri.hostname:
+                    return (uri.hostname + uri.path)[:160]
+            except ValueError:
+                pass
+    if isinstance(dest, pikepdf.Array) and len(dest) and isinstance(dest[0], pikepdf.Dictionary):
+        number = page_numbers.get(dest[0].objgen)
+        if number:
+            return f"page {number}"
+    return ""
+
+
+def fallback_label(context: str, hint: str) -> str:
+    """A rule-based accessible label: the stated purpose, else the destination."""
+    purpose = _PURPOSE.search(context or "")
+    if purpose:
+        return purpose[1][:1].upper() + purpose[1][1:]
+    if hint.startswith("page "):
+        return f"Go to {hint}"
+    if hint:
+        host, _, path = hint.partition("/")
+        name = re.sub(r"[-_]+", " ", unquote(path.rstrip("/").split("/")[-1]))
+        if name and re.fullmatch(r"[\w ]{2,64}", name):
+            return f"Open {name} on {host}"
+        return f"Open link to {host}"
+    return "Open linked destination"
+
+
+def is_generic(label: str) -> bool:
+    return " ".join(label.casefold().split()).strip(" .:!?") in GENERIC
 
 
 def check(ctx: CheckContext) -> list[Issue]:
@@ -46,15 +120,16 @@ def check(ctx: CheckContext) -> list[Issue]:
             )
             label = tag_labels.get(annot.objgen) or _label(annot)
             malformed = False
+            rect = None
+            try:
+                rect = link_rect(page, annot)
+            except (KeyError, TypeError, ValueError, OverflowError):
+                pass
             if not label:
-                try:
-                    rect = pymupdf.Rect([float(v) for v in annot["/Rect"]])
-                    rect = rect * page.transformation_matrix
-                    if rect.is_empty or rect.is_infinite:
-                        raise ValueError("invalid rectangle")
-                    label = " ".join(page.get_textbox(rect).split())
-                except (KeyError, TypeError, ValueError, OverflowError):
+                if rect is None:
                     malformed = True
+                else:
+                    label = " ".join(page.get_textbox(rect).split())
             normalized = " ".join(label.casefold().split()).strip(" .:!?")
             if malformed:
                 kind = "link_location_unreadable"
@@ -73,13 +148,21 @@ def check(ctx: CheckContext) -> list[Issue]:
                 description += "context explain the link purpose."
             else:
                 continue
-            issues.append(Issue(
+            issue = Issue(
                 CHECK_ID, kind, description, evaluation_result="needs_review",
                 page=number, object_ref=ref,
                 suggestion="Provide meaningful link text or a tagged alternative description that "
                            "identifies its purpose, and verify the associated context.",
                 sources=["pikepdf", "PyMuPDF"],
-            ))
+            )
+            if kind in ("link_purpose_unclear", "link_label_missing") and rect is not None:
+                # Proposed accessible label; remediation/link.py writes it (or an AI one).
+                visible = " ".join(page.get_textbox(rect).split()) or label
+                issue.evidence = link_context(page, rect, visible) or visible
+                issue.suggested_text = fallback_label(
+                    issue.evidence, destination_hint(annot, ctx.page_numbers))
+                issue.suggestion_source = "rule"
+            issues.append(issue)
     # Only the link-specific PDF/UA-1 rules, not generic annotation rules
     # (7.18.1 can concern unrelated annotations). These are supporting machine
     # findings, not a verdict on contextual WCAG 2.4.4 conformance.

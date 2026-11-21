@@ -37,6 +37,9 @@ class Issue:
     # and who wrote it: "rule" (template/fixed text) or "llm" (spec v0.5.0, optional).
     suggested_text: str | None = None
     suggestion_source: Literal["rule", "llm"] | None = None
+    # The source text the issue is about (a link's sentence, a flagged instruction).
+    # Used by repairs and AI suggestions; not part of the response.
+    evidence: str | None = None
 
     @property
     def key(self) -> tuple:

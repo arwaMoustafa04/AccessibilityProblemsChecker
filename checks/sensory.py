@@ -3,7 +3,16 @@
 import re
 
 from checks.base import CheckContext, Issue
-from checks.review_text import ACTION, COLOR_WORD, blocks, excerpt
+from checks.review_text import (
+    ACTION,
+    COLOR_CUE,
+    COLOR_WORD,
+    SENSORY_CUE,
+    blocks,
+    cue_sentence,
+    excerpt,
+    rewrite_draft,
+)
 
 CHECK_ID = "CHK-SENSORY"
 SENSORY = re.compile(
@@ -16,7 +25,7 @@ def check(ctx: CheckContext) -> list[Issue]:
     issues = []
     for page, index, text in blocks(ctx):
         if ACTION.search(text) and (SENSORY.search(text) or COLOR_WORD.search(text)):
-            issues.append(Issue(
+            issue = Issue(
                 CHECK_ID, "sensory_instruction_needs_review",
                 f'Instruction may rely on a sensory cue: "{excerpt(text)}". '
                 "A label or other context may already provide an alternative; verify it manually.",
@@ -25,5 +34,12 @@ def check(ctx: CheckContext) -> list[Issue]:
                 suggestion="Identify the control or content by a meaningful name as well as its "
                            "color, shape, size, position or sound.",
                 sources=["PyMuPDF"],
-            ))
+            )
+            draft = rewrite_draft(text, SENSORY_CUE) or rewrite_draft(text, COLOR_CUE)
+            if draft:  # a suggestion for the author; the PDF text is never changed
+                issue.evidence, issue.suggested_text = draft
+                issue.suggestion_source = "rule"
+            else:
+                issue.evidence = cue_sentence(text, SENSORY, COLOR_WORD)
+            issues.append(issue)
     return issues

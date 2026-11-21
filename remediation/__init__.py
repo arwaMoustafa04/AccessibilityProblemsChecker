@@ -106,7 +106,7 @@ def apply_repairs(issues: list[Issue], rctx: RepairContext) -> dict[tuple, Repai
 
 
 # Registered repairs (importing a module registers its @repairer functions).
-from remediation import lang, nontext, title  # noqa: E402,F401
+from remediation import lang, link, nontext, title  # noqa: E402,F401
 
 __all__ = ["REPAIRERS", "RepairAction", "RepairContext", "apply_repairs", "can_repair",
            "repairer"]

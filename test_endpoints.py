@@ -220,16 +220,6 @@ def test_phase4_detects_and_classifies_without_repairing(post_pdf, monkeypatch) 
         assert artifact["sha256"] == hashlib.sha256(content).hexdigest()
         with pikepdf.open(io.BytesIO(content)) as pdf:
             assert len(pdf.pages) > 0
-<<<<<<< HEAD
-    assert body["status"] == "completed"
-    assert body["outcome"] == "completed_no_repairs"
-    assert body["checks_performed"] == [
-        "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
-    assert body["findings"] == [] and body["repairs"] == []
-    assert body["summary"] == {"total_issues": 0, "fixed_count": 0, "human_review_count": 0}
-    assert "CHK-TITLE" in body["limitations"][0]
-=======
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     assert body["output_pdf"]["modified"] is False
     assert base64.b64decode(body["output_pdf"]["content_base64"]) == original
 
@@ -273,16 +263,8 @@ def test_pdf_missing_title_and_language_is_repaired(repairs_on, post_pdf) -> Non
     body = response.json()
 
     assert body["outcome"] == "completed_with_repairs"
-<<<<<<< HEAD
-    assert body["input"] == {"file_name": "annual_report.pdf", "sha256": original_hash,
-                             "size_bytes": len(original)}
-    assert body["checks_performed"] == [
-        "CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY", "CHK-TITLE", "CHK-LANG"]
-    assert {f["issue_type"] for f in body["findings"]} == {
-=======
     fixable = [f for f in body["findings"] if f["classification"] == "auto_fixable"]
     assert {f["issue_type"] for f in fixable} == {
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
         "missing_document_title", "display_doc_title_not_set", "missing_document_language"}
     assert all(f["status"] == "fixed" for f in fixable)
     # The untagged test PDF's structure finding is for human review and never repaired.
