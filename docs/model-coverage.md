@@ -14,12 +14,12 @@ cross-team reports.
 
 | Requirement | What it requires | Tests that evaluate it |
 |---|---|---|
-| REQ-02 | Reject unsupported input with a reason, including scanned PDFs | T-06, T-07, T-08, T-09, T-10, T-21, T-22 |
-| REQ-06 | Never auto-fix issues that need human judgment | T-13, T-15, T-16, T-17, T-18, T-24 |
-| REQ-07 | Automatically repair auto-fixable issues | T-14, T-25 |
+| REQ-02 | Reject unsupported input with a reason, including scanned PDFs | T-06, T-07, T-08, T-09, T-10, T-21, T-22, T-34 |
+| REQ-06 | Never auto-fix issues that need human judgment | T-13, T-15, T-16, T-17, T-18, T-24, T-26, T-27, T-28, T-29, T-31, T-32 |
+| REQ-07 | Automatically repair auto-fixable issues | T-14, T-25, T-30, T-33 |
 | REQ-08 | Re-validate after repair | T-14, T-24, T-25 |
 | REQ-09 | Report each repair's result and new issues | T-14, T-24 |
-| REQ-10 | Keep human-review items unresolved, with enough information to locate and understand them | T-15, T-16, T-17, T-18, T-24 |
+| REQ-10 | Keep human-review items unresolved, with enough information to locate and understand them | T-15, T-16, T-17, T-18, T-24, T-26, T-27, T-28, T-29, T-31, T-32 |
 | REQ-11 | Produce the output PDF and the report PDF | T-03, T-04, T-20 |
 | REQ-12 | Report lists checks, issues, repairs, review items and limitations | T-13, T-20, T-23 |
 | REQ-13 | Tie findings, repairs and validation results to the exact PDF version | T-03, T-04, T-14, T-20 |

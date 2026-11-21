@@ -5,7 +5,10 @@ from collections.abc import Iterator
 
 from checks.base import CheckContext
 
-COLORS = r"(?:red|green|blue|yellow|orange|purple|pink|brown|black|white|gr[ae]y)"
+# Words that are rarely anything but colors ("gold", "silver", "tan" are left out).
+COLORS = (r"(?:red|green|blue|yellow|orange|purple|pink|brown|black|white|gr[ae]y|navy|"
+          r"maroon|teal|crimson|scarlet|burgundy|magenta|cyan|violet|indigo|turquoise|"
+          r"lavender|olive)")
 ACTION = re.compile(r"\b(?:click|select|press|choose|follow|use|complete|enter|refer|see|look|find)\b", re.I)
 COLOR_WORD = re.compile(rf"\b{COLORS}\b", re.I)
 

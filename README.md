@@ -199,10 +199,10 @@ error source; code, component and system coverage).
 | Endpoint | What it does |
 |---|---|
 | `POST /test/setup` | `{"target_url": "<system base URL>"}` → creates a session, calls the target's `/test/setup`, returns 201 `{"session_id"}` |
-| `POST /test/run` | `{"session_id"}` → runs T-01 to T-25 once, reads the target's `/test/report`, returns the full report |
+| `POST /test/run` | `{"session_id"}` → runs T-01 to T-34 once, reads the target's `/test/report`, returns the full report |
 | `GET /test/report?session_id=...` | Returns the stored report (409 until the run ends) |
 
-The 25 tests (`tester/suite.py`):
+The 34 tests (`tester/suite.py`):
 
 | Test | Checks | Acceptance criteria |
 |---|---|---|
@@ -231,6 +231,8 @@ The 25 tests (`tester/suite.py`):
 | T-23 | Generated PDF, page 1 text + page 2 scanned → processed, page 2 named in `limitations`, no text-based findings on it (**Phase 5**) | AC-03 |
 | T-24 | `accessibilityIssues.pdf`: spec v0.5.0 repair rules (method/source values, repaired human-review items stay unresolved, `fixed_count`, `modified`); never compares AI text (**Phase 5**) | AC-04, AC-06, AC-07 |
 | T-25 | Generated tagged PDF: `/Lang` "en_US" and title "Untitled" repaired to a valid tag and a real title, re-validated (**Phase 5**) | AC-05, AC-06 |
+| T-26 to T-33 | Pod test set from Team 3 (`pod/wcag-*.pdf`, one WCAG issue per file): the intended check is found with the right classification: 1.1.1 → CHK-NONTEXT, 1.3.1 → CHK-STRUCTURE, 1.3.3 → CHK-SENSORY, 1.4.1 → CHK-COLOR, 2.4.4 → CHK-LINK, 2.4.6 → CHK-HEADINGS (human_review); 2.4.2 → CHK-TITLE, 3.1.1 → CHK-LANG (auto_fixable) (**Phase 5**) | AC-03, AC-04, AC-07 |
+| T-34 | `pod/ocr-unreadable-scan.pdf` (simulated faded scan, no text layer) → 422 `NO_TEXT_LAYER` (**Phase 5**) | AC-02 |
 
 Named files are the team's shared test set in `tester/fixtures/` (its README gives each
 file's expected result); the no-file, corrupted and exact-size cases are generated in code.

@@ -69,13 +69,9 @@ def check(ctx: CheckContext) -> list[Issue]:
             suggestion="Set a title that describes the document's topic or purpose.",
             sources=["pikepdf"])
     else:
-        if info_title(ctx) and not xmp_title(ctx):
-            by_type["title_missing_from_xmp"] = Issue(
-                CHECK_ID, "title_missing_from_xmp",
-                "Title is set in the Info dictionary but not in the XMP metadata (dc:title).",
-                object_ref="Metadata/dc:title",
-                suggestion="Copy the title into the XMP metadata, as PDF/UA-1 requires.",
-                sources=["pikepdf"])
+        # An Info title without an XMP copy is not reported: WCAG 2.4.2 (technique
+        # PDF18) needs the Info /Title plus DisplayDocTitle; dc:title is a PDF/UA-1
+        # rule. Title repairs still write both, so repaired files carry both.
         if _looks_like_placeholder(title, ctx.file_name):
             by_type["title_not_descriptive"] = Issue(
                 CHECK_ID, "title_not_descriptive",
@@ -98,9 +94,9 @@ def check(ctx: CheckContext) -> list[Issue]:
     # veraPDF confirms these, and adds any title rule our own checks did not catch.
     for rule in ctx.verapdf.matching("7.1", "DisplayDocTitle", "dc:title", "title"):
         text = rule.description.lower()
-        key = ("display_doc_title_not_set" if "displaydoctitle" in text
-               else "missing_document_title" if not title
-               else "title_missing_from_xmp")
+        if "displaydoctitle" not in text and title:
+            continue  # an XMP-only (dc:title) rule while a title exists: PDF/UA, not 2.4.2
+        key = "display_doc_title_not_set" if "displaydoctitle" in text else "missing_document_title"
         if key in by_type:
             _cite(by_type[key], rule)
         else:

@@ -15,9 +15,11 @@ from checks.review_text import (
 )
 
 CHECK_ID = "CHK-SENSORY"
+# "above" and "below" are not cues: W3C's Understanding 1.3.3 treats them as references
+# to earlier/later content in reading order, which conform when unambiguous.
 SENSORY = re.compile(
     r"\b(?:round|square|triangular|circular|large|small|big|little|upper|lower|"
-    r"left|right|above|below|top|bottom|beep|tone|sound|arrow)\b", re.I,
+    r"left|right|top|bottom|beep|tone|sound|arrow)\b", re.I,
 )
 
 

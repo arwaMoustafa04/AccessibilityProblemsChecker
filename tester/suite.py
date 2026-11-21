@@ -477,6 +477,28 @@ t_empty_link = _detection_test(  # a link with no label at all
     "link_empty.pdf", {"CHK-LINK": "human_review"}, 1, "person2")
 
 
+# Pod test set from Team 3 (tester/fixtures/pod/README.md): one intended WCAG issue per
+# file. Only the intended check is required, not "nothing else": isolation is not agreed.
+POD_CASES = {
+    "T-26": ("wcag-1.1.1-missing-alt.pdf", "CHK-NONTEXT", "human_review"),
+    "T-27": ("wcag-1.3.1-heading-tagged-as-paragraph.pdf", "CHK-STRUCTURE", "human_review"),
+    "T-28": ("wcag-1.3.3-location-only-instruction.pdf", "CHK-SENSORY", "human_review"),
+    "T-29": ("wcag-1.4.1-color-only-status.pdf", "CHK-COLOR", "human_review"),
+    "T-30": ("wcag-2.4.2-missing-title.pdf", "CHK-TITLE", "auto_fixable"),
+    "T-31": ("wcag-2.4.4-ambiguous-link-purpose.pdf", "CHK-LINK", "human_review"),
+    "T-32": ("wcag-2.4.6-vague-heading.pdf", "CHK-HEADINGS", "human_review"),
+    "T-33": ("wcag-3.1.1-missing-language.pdf", "CHK-LANG", "auto_fixable"),
+}
+POD_TESTS = {test_id: _detection_test(name, {check: cls}, None, "pod")
+             for test_id, (name, check, cls) in POD_CASES.items()}
+
+
+def t_unreadable_scan_rejected(ctx: Context) -> str:
+    sent = fixture("pod/ocr-unreadable-scan.pdf")
+    return expect_error(ctx.process(sent, name="ocr-unreadable-scan.pdf"), 422,
+                        {"NO_TEXT_LAYER"})
+
+
 def t_title_lang_headings(ctx: Context) -> str:
     sent = tagged_problems_pdf()
     body = expect_evaluation(ctx.process(sent, name="tagged_problems.pdf"), sent)
@@ -711,6 +733,10 @@ SUITE: list[TestCase] = [
              ("AC-04", "AC-06", "AC-07"), phase=5),
     TestCase("T-25", t_language_and_title_repaired, ("COMP-REPAIR", "COMP-REVALIDATION"),
              ("AC-05", "AC-06"), phase=5),
+    # Pod test set (Team 3's PDFs, tester/fixtures/pod): one WCAG issue per file
+    *(TestCase(test_id, POD_TESTS[test_id], ("COMP-DETECTION", "COMP-CLASSIFICATION"),
+               ("AC-03", "AC-04", "AC-07"), phase=5) for test_id in POD_CASES),
+    TestCase("T-34", t_unreadable_scan_rejected, ("COMP-VALIDATION",), ("AC-02",), phase=5),
 ]
 
 
@@ -723,15 +749,17 @@ MODEL_MAPPING_URL = ("https://github.com/arwaMoustafa04/AccessibilityProblemsChe
                      "docs/model-coverage.md")
 MODEL_REQUIREMENTS: dict[str, tuple[str, tuple[str, ...]]] = {
     "REQ-02": ("Reject unsupported input with a reason, including scanned PDFs",
-               ("T-06", "T-07", "T-08", "T-09", "T-10", "T-21", "T-22")),
+               ("T-06", "T-07", "T-08", "T-09", "T-10", "T-21", "T-22", "T-34")),
     "REQ-06": ("Never auto-fix issues that need human judgment",
-               ("T-13", "T-15", "T-16", "T-17", "T-18", "T-24")),
-    "REQ-07": ("Automatically repair auto-fixable issues", ("T-14", "T-25")),
+               ("T-13", "T-15", "T-16", "T-17", "T-18", "T-24", "T-26", "T-27", "T-28",
+                "T-29", "T-31", "T-32")),
+    "REQ-07": ("Automatically repair auto-fixable issues", ("T-14", "T-25", "T-30", "T-33")),
     "REQ-08": ("Re-validate after repair", ("T-14", "T-24", "T-25")),
     "REQ-09": ("Report each repair's result and new issues", ("T-14", "T-24")),
     "REQ-10": ("Keep human-review items unresolved, with enough information to locate and "
                "understand them",
-               ("T-15", "T-16", "T-17", "T-18", "T-24")),
+               ("T-15", "T-16", "T-17", "T-18", "T-24", "T-26", "T-27", "T-28", "T-29",
+                "T-31", "T-32")),
     "REQ-11": ("Produce the output PDF and the report PDF", ("T-03", "T-04", "T-20")),
     "REQ-12": ("Report lists checks, issues, repairs, review items and limitations",
                ("T-13", "T-20", "T-23")),

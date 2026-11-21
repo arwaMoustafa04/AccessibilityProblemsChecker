@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 
 from checks.base import CheckContext, Issue
+from checks.marked_content import element_text
 from checks.structure_tree import STANDARD_HEADINGS, iter_elements
 from checks.text_layout import lines, probable_headings
 
@@ -135,8 +136,54 @@ def _label_issues(ctx: CheckContext) -> list[Issue]:
     return issues
 
 
+# Whole heading texts that say nothing about the section (WCAG 2.4.6). Only the
+# complete heading is compared, so "Other services" or "Section 3: Fees" are not flagged.
+VAGUE_HEADINGS = {
+    "miscellaneous", "misc", "other", "others", "more", "more info", "more information",
+    "other information", "additional information", "stuff", "things", "various",
+    "general", "details", "info", "information", "extra", "extras", "untitled",
+    "heading", "new heading", "section", "new section", "subsection", "text", "title",
+    "placeholder", "tbd", "todo", "to do", "lorem ipsum", "click here",
+}
+_NUMBERED_PLACEHOLDER = re.compile(r"^(?:section|part|chapter|heading|item|topic)\s*\d+[a-z]?$")
+MAX_VAGUE_ISSUES = 20
+
+
+def _normalized_heading(text: str) -> str:
+    text = re.sub(r"[^\w\s]", " ", text.lower())
+    return " ".join(text.split())
+
+
+def _vague_heading_issues(ctx: CheckContext) -> list[Issue]:
+    issues: list[Issue] = []
+    elems = [e for e in iter_elements(ctx) if e.tag in STANDARD_HEADINGS or e.tag == "/P"]
+    for index, elem in enumerate(elems):
+        if elem.tag not in STANDARD_HEADINGS:
+            continue
+        text = element_text(ctx, elem)
+        name = _normalized_heading(text.text) if text else ""
+        if text is None or not name or not (name in VAGUE_HEADINGS
+                                            or _NUMBERED_PLACEHOLDER.match(name)):
+            continue
+        following = next((element_text(ctx, e) for e in elems[index + 1:] if e.tag == "/P"),
+                         None)
+        hint = (f' For example, base it on the section\'s first sentence: '
+                f'"{following.text[:120]}".' if following and following.text.strip() else "")
+        issues.append(Issue(
+            CHECK_ID, "heading_not_descriptive",
+            f'Heading "{text.text.strip()}" ({elem.tag.lstrip("/")}) does not describe the '
+            "content of its section.",
+            evaluation_result="needs_review", page=elem.page, object_ref=elem.ref,
+            suggestion="Rename the heading so it says what the section is about." + hint,
+            sources=["pikepdf"]))
+        if len(issues) >= MAX_VAGUE_ISSUES:
+            break
+    return issues
+
+
 def check(ctx: CheckContext) -> list[Issue]:
     issues = _heading_issues(ctx)
+    issues += _vague_heading_issues(ctx)
     issues += _label_issues(ctx)
     known = {i.issue_type for i in issues}
     for rule in ctx.verapdf.matching("7.4"):

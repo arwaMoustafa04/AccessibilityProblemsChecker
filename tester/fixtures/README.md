@@ -38,6 +38,22 @@ description, the page, and that human-review findings are in `human_review_items
 | `accessibilityIssues.pdf` with `output=zip` | — | 200 zip: `original.pdf` identical to the upload, output PDF, report PDF, `result.json` matching | T-20 |
 | `goodAccessible.pdf` with `output=xml` | — | 400 `INVALID_REQUEST` | T-21 |
 
+Pod test set from Team 3 (`pod/`, see `pod/README.md`; Phase 5). Each file has one
+intended issue; the tests require that check with that classification (other findings
+are allowed, since the pod has not agreed that each file must produce only one):
+
+| File | Intended issue | Expected finding | Test |
+|---|---|---|---|
+| `pod/wcag-1.1.1-missing-alt.pdf` | Route map Figure without /Alt | CHK-NONTEXT, human_review | T-26 |
+| `pod/wcag-1.3.1-heading-tagged-as-paragraph.pdf` | "Weekend hours" styled like the H2 above it but tagged P | CHK-STRUCTURE, human_review | T-27 |
+| `pod/wcag-1.3.3-location-only-instruction.pdf` | "choose from the list on the right" | CHK-SENSORY, human_review | T-28 |
+| `pod/wcag-1.4.1-color-only-status.pdf` | Booking status shown only by navy/maroon text | CHK-COLOR, human_review | T-29 |
+| `pod/wcag-2.4.2-missing-title.pdf` | No Info or XMP title | CHK-TITLE, auto_fixable | T-30 |
+| `pod/wcag-2.4.4-ambiguous-link-purpose.pdf` | "Click here" link | CHK-LINK, human_review | T-31 |
+| `pod/wcag-2.4.6-vague-heading.pdf` | H2 "Miscellaneous" | CHK-HEADINGS, human_review | T-32 |
+| `pod/wcag-3.1.1-missing-language.pdf` | No /Lang in the catalog or tags | CHK-LANG, auto_fixable | T-33 |
+| `pod/ocr-unreadable-scan.pdf` | Faded scan, no text layer | 422 `NO_TEXT_LAYER` | T-34 |
+
 `person2/` holds copies of Person 2's fixtures from `test_fixtures/person2/`
 (see that folder's README for how they were made); `pdf_checks/` is Person 1's set.
 

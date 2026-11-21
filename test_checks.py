@@ -144,7 +144,8 @@ def test_title_only_in_info_dictionary() -> None:
     pdf.add_blank_page()
     _set_title(pdf, "Annual Budget", xmp=False)
     pdf.Root.ViewerPreferences = pikepdf.Dictionary(DisplayDocTitle=True)
-    assert types(issues_of(title_check.check, _save(pdf))) == {"title_missing_from_xmp"}
+    # dc:title is a PDF/UA-1 rule; WCAG 2.4.2 (PDF18) is met by the Info title + DisplayDocTitle.
+    assert issues_of(title_check.check, _save(pdf)) == []
 
 
 @pytest.mark.parametrize("title", ["Untitled", "Microsoft Word - budget.docx", "scan_0042.pdf",

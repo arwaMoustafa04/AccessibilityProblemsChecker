@@ -152,11 +152,15 @@ def test_placeholder_title_is_replaced_and_other_info_kept():
         assert str(pdf.docinfo["/Author"]) == "Finance team"  # untouched by the title fix
 
 
-def test_good_title_is_copied_to_xmp_not_replaced():
+def test_good_title_without_xmp_is_left_alone():
+    # An Info title without dc:title meets WCAG 2.4.2 (PDF18), so it is not a finding
+    # and the title is not touched (titles the repairs write go into both).
     result = run(text_pdf([("Some heading", 20), (ENGLISH, 11)],
                           title="Annual Report 2026", lang="en"))
-    repair = next(r for r in result.repairs if "XMP" in r.action)
-    assert repair.applied_text == "Annual Report 2026" and "Copied" in repair.action
+    assert not [f for f in result.findings if f.check_id == "CHK-TITLE"
+                and f.issue_type != "display_doc_title_not_set"]
+    with output(result) as pdf:
+        assert str(pdf.docinfo["/Title"]) == "Annual Report 2026"
 
 
 def test_title_falls_back_to_file_name():
