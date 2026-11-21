@@ -6,14 +6,15 @@ level and classification (auto_fixable / human_review) come from `catalog.py`.
 
 | Check | File | Uses |
 |---|---|---|
-| CHK-TITLE (2.4.2) | `title.py` | pikepdf (Info, XMP, ViewerPreferences), PyMuPDF metadata, veraPDF 7.1 |
+| CHK-TITLE (2.4.2) | `title.py` | pikepdf (Info, XMP, ViewerPreferences), PyMuPDF metadata, veraPDF 7.1 (an Info title without XMP `dc:title` is not a 2.4.2 finding) |
 | CHK-LANG (3.1.1) | `lang.py` | pikepdf (catalog and element /Lang), PyMuPDF (pages with text), veraPDF 7.2 |
-| CHK-HEADINGS (2.4.6) | `headings.py` | pikepdf (structure tree, RoleMap, form fields), PyMuPDF (font sizes), veraPDF 7.4 |
+| CHK-HEADINGS (2.4.6) | `headings.py` | pikepdf (structure tree, RoleMap, form fields), PyMuPDF (font sizes), tagged heading text (`marked_content.py`) for vague headings, veraPDF 7.4 |
 | CHK-SENSORY (1.3.3) | `sensory.py` | English instruction/sensory text cues, page locations |
+| (shared) | `marked_content.py` | text, font and size of each tagged element (MCIDs in page content) |
 | CHK-COLOR (1.4.1) | `color.py` | English color/meaning cues and multicolor vector graphics |
 | CHK-LINK (2.4.4) | `link.py` | pikepdf annotations/tagged alternatives, PyMuPDF labels, veraPDF PDF/UA-1 7.18.5 |
 | CHK-NONTEXT (1.1.1) | `nontext.py` → `pdf_checks.py` | pikepdf (Figure /Alt, images in page content, Form XObjects, inline images), veraPDF 7.3 |
-| CHK-STRUCTURE (1.3.1) | `structure.py` → `pdf_checks.py` | pikepdf (structure tree, MarkInfo, relationships, table headers), veraPDF 7.1 tagging and 7.5 tables |
+| CHK-STRUCTURE (1.3.1) | `structure.py` → `pdf_checks.py` | pikepdf (structure tree, MarkInfo, relationships, table headers), tag text/font/size (`marked_content.py`) for paragraphs styled as headings, veraPDF 7.1 tagging and 7.5 tables |
 
 Person 2 behavior, reproducible PDFs and test expectations are documented in
 [`test_fixtures/person2/README.md`](../test_fixtures/person2/README.md). These

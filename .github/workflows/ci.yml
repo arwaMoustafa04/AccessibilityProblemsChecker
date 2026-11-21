@@ -10,6 +10,7 @@ on:
 jobs:
   static-checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 15  # fail fast instead of GitHub's 6-hour default
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +38,7 @@ jobs:
   test:
     needs: static-checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # fail fast instead of GitHub's 6-hour default
     steps:
       - uses: actions/checkout@v4
 
@@ -48,24 +50,28 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Unit and integration tests (system + tester)
+        timeout-minutes: 10
         run: python -m pytest -v
 
       - name: Start the system
         run: |
           uvicorn main:app --port 8001 --no-access-log > system.log 2>&1 &
-          for i in $(seq 1 20); do curl -fs http://localhost:8001/health && break; sleep 1; done
+          for i in $(seq 1 30); do curl -fs http://localhost:8001/health && break; sleep 1; done
+          curl -fs --max-time 5 http://localhost:8001/health || { cat system.log; exit 1; }
 
       - name: Contract tests against the running system (openapi.yaml)
+        timeout-minutes: 5
         run: python contract_report.py http://localhost:8001
 
       - name: Full tester suite against the running system
+        timeout-minutes: 15
         run: |
           # The local system counts as our own, so the report must include coverage.model.
           (cd tester && OWN_SYSTEM_URLS=http://localhost:8001 uvicorn app:app --port 8002 --no-access-log > ../tester.log 2>&1 &)
-          for i in $(seq 1 20); do curl -fs -o /dev/null http://localhost:8002/docs && break; sleep 1; done
-          SID=$(curl -fs -X POST localhost:8002/test/setup -H 'content-type: application/json' \
+          for i in $(seq 1 30); do curl -fs -o /dev/null http://localhost:8002/docs && break; sleep 1; done
+          SID=$(curl -fs --max-time 30 -X POST localhost:8002/test/setup -H 'content-type: application/json' \
                 -d '{"target_url":"http://localhost:8001"}' | python -c 'import sys,json;print(json.load(sys.stdin)["session_id"])')
-          curl -fs -X POST localhost:8002/test/run -H 'content-type: application/json' \
+          curl -fs --max-time 600 -X POST localhost:8002/test/run -H 'content-type: application/json' \
                -d "{\"session_id\":\"$SID\"}" > report.json
           python - <<'PY'
           import json, sys

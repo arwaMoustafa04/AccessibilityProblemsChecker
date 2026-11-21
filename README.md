@@ -112,7 +112,27 @@ upload (see [`checks/README.md`](checks/README.md)); the image and structure che
 - **CHK-STRUCTURE (1.3.1):** checks for a nonempty structure tree, the tagged-document
   marker, malformed relationships, and tagged tables with data cells but no headers.
   Missing/empty structure is `fail`; marker, relationship and header concerns are
-  `needs_review`. Nested tables are inspected separately.
+  `needs_review`. Nested tables are inspected separately. In a tagged PDF, a paragraph
+  (`P`) drawn in exactly the same font and size as a tagged heading, short and without
+  sentence punctuation, is `heading_tagged_as_paragraph` (`needs_review`, suggested tag
+  e.g. `H2`): it looks like a heading but screen-reader heading navigation skips it.
+  The body-text style never counts as a heading style (`checks/marked_content.py` reads
+  each tag's text, font and size).
+- **CHK-HEADINGS (1.3.1, 2.4.6):** besides heading levels, empty headings and form
+  labels, a heading whose whole text says nothing about its section ("Miscellaneous",
+  "Other", "More information", "Section 3", "Untitled") is `heading_not_descriptive`
+  (`needs_review`); the suggestion quotes the section's first sentence as a hint.
+  Headings that only start with such a word ("Other services", "Section 3: Fees") are
+  not flagged.
+- **CHK-TITLE (2.4.2):** a missing, placeholder or file-name title, or `DisplayDocTitle`
+  not set. A title in the Info dictionary without an XMP `dc:title` copy is **not**
+  reported: WCAG technique PDF18 needs only the Info title plus `DisplayDocTitle`
+  (`dc:title` is a PDF/UA-1 rule). Titles the repairs write go into both.
+- **CHK-SENSORY (1.3.3) and CHK-COLOR (1.4.1)** look for instructions that rely on shape,
+  size, position or sound, and for color words (basic colors plus names like navy,
+  maroon, teal, crimson) used to convey meaning. "Above" and "below" are not sensory
+  cues: W3C's Understanding 1.3.3 treats them as references to content earlier or later
+  in reading order.
 - Both checks have `classification: human_review`, `status: needs_human_review`,
   and finding IDs in `human_review_items`. CHK-STRUCTURE provides rule-based suggestions only. CHK-NONTEXT offers AI-drafted alt text (or a decorative-image decision) as a suggestion; by default it is not written into the PDF, because REQ-06 and AC-04 say human-review issues are not changed automatically. `AI_WRITE_HUMAN_REVIEW_FIXES=true` writes it (Figure alt text or an artifact) once the pod and instructor agree to change REQ-06; the findings stay unresolved for human review either way.
 - CHK-TITLE and CHK-LANG findings are `auto_fixable` and are repaired automatically
@@ -134,7 +154,6 @@ before/after findings are matched by walking both files side by side
 | Check | Issue | Repair |
 |---|---|---|
 | CHK-TITLE | missing title, placeholder or file-name title | New title in Info `/Title` and XMP `dc:title`: an AI suggestion from page 1 if an LLM is set up, else the largest heading on page 1, else the cleaned file name |
-| CHK-TITLE | title only in Info, not XMP | Copies it into XMP `dc:title` (other Info fields are kept) |
 | CHK-TITLE | `DisplayDocTitle` not set | Sets `ViewerPreferences/DisplayDocTitle` to true |
 | CHK-LANG | missing or invalid document language | Corrects a broken tag (`en_US` → `en-US`, `English` → `en`), else detects the language from the text (`langdetect`, offline), else assumes `en-US` and says so in `limitations` |
 | CHK-LANG | invalid passage language | Corrects the tag, or removes it so the passage uses the document language |
@@ -151,7 +170,7 @@ before/after findings are matched by walking both files side by side
   and noted; an LLM problem never fails the request.
 - CHK-HEADINGS findings (human review) carry rule-based `suggested_text` where the fix
   is clear: the right heading level (`H1`, `H3`), or a form label from the field name
-  (`first_name` → "First name").
+  (`first_name` → "First name"). Vague headings get advice only, no suggested text.
 - Adding a repair, and the `llm.py` functions the AI hook expects:
   [`remediation/README.md`](remediation/README.md).
 
@@ -271,8 +290,11 @@ coverage 1435/1837. Rerun against the deployed system once Phase 5 is deployed.
   is not treated as a Figure `/Alt` replacement. Malformed/cyclic data produces review
   findings for incomplete inspection. Tree depth over 128, more than 100,000 structure
   nodes, or Form nesting over 64 also produces an incomplete-inspection finding.
-- CHK-SENSORY and CHK-COLOR use English text cues and CHK-LINK does not visit link
-  targets; these heuristics can miss issues or flag acceptable content.
+- CHK-SENSORY, CHK-COLOR and the vague-heading check use English word lists, and CHK-LINK
+  does not visit link targets; these heuristics can miss issues or flag acceptable
+  content. The heading-style check compares only the font and size of the first text in
+  each tag, so a heading told apart by color or spacing alone is not found, and text in
+  fonts with custom encodings may be shown garbled in the finding.
 - **Repairs cover CHK-TITLE and CHK-LANG.** CHK-NONTEXT alt text, CHK-LINK labels and
   CHK-COLOR/CHK-SENSORY rewrites are suggestions only by default (REQ-06, AC-04); image and
   link text is written into the PDF only with `AI_WRITE_HUMAN_REVIEW_FIXES=true`. A rule-based
