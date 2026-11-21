@@ -21,7 +21,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "tester"))
-from suite import clean_pdf, make_pdf, pdf_of_exact_size  # noqa: E402  (test fixtures)
+from suite import clean_pdf, make_pdf, pdf_of_exact_size, scanned_pdf  # noqa: E402  (test fixtures)
 
 SPEC = yaml.safe_load((ROOT / "openapi.yaml").read_text())
 
@@ -117,7 +117,8 @@ def main(base: str) -> int:
                  ("413", call(pdf_of_exact_size(20_971_521)), 413, "Error"),
                  ("415", call(b"PK\x03\x04 not a pdf", "a.docx"), 415, "Error"),
                  ("422 corrupted", call(b"%PDF-1.7\n1 0 obj << /Broken"), 422, "Error"),
-                 ("422 password", call(make_pdf(user_password="x")), 422, "Error")],
+                 ("422 password", call(make_pdf(user_password="x")), 422, "Error"),
+                 ("422 no text layer", call(scanned_pdf()), 422, "Error")],
                 ["500/503 (cannot be triggered from outside)"])
 
     setup = lambda body: c.post(f"{base}/test/setup", json=body)  # noqa: E731
