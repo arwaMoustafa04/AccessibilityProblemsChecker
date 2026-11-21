@@ -113,6 +113,19 @@ def run_verapdf(data: bytes) -> VeraReport:
         return VeraReport(False, error="veraPDF report could not be read")
 
 
+_CITATION = re.compile(r"\s*\(veraPDF PDF/UA-1 rule [^)]*\)")
+
+
+def add_advice(issue, advice: str) -> None:
+    """Add rule-based advice to an Issue's suggestion, keeping veraPDF citations at the end."""
+    current = issue.suggestion or ""
+    citations = [c.strip() for c in _CITATION.findall(current)]
+    text = _CITATION.sub("", current).strip()
+    if advice.strip() and advice.strip() not in text:
+        text = f"{text} {advice.strip()}".strip()
+    issue.suggestion = " ".join([text, *citations]).strip()
+
+
 def cite_rule(issue, rule: RuleFailure) -> None:
     """Mark an existing Issue as confirmed by a veraPDF rule (once per rule)."""
     if "veraPDF" not in issue.sources:

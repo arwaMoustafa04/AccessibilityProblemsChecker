@@ -13,7 +13,7 @@ added for review.
 from __future__ import annotations
 
 from checks.base import CheckContext, Issue
-from checks.verapdf import RuleFailure, cite_rule
+from checks.verapdf import RuleFailure, add_advice, cite_rule
 
 CHECK_ID = "CHK-STRUCTURE"
 MAX_RULE_ISSUES = 20
@@ -77,6 +77,6 @@ def check(ctx: CheckContext) -> list[Issue]:
                 'Review the document tags and reading order; tag meaningful '
                 'content and mark decorative content as artifacts.'
             ))
-        issue.suggestion = (issue.suggestion or "") + " " + issue.suggested_text
+        add_advice(issue, issue.suggested_text)
         issue.suggestion_source = "rule"
     return issues

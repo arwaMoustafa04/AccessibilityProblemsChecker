@@ -8,6 +8,7 @@ import pymupdf
 
 from checks.base import CheckContext, Issue
 from checks.structure_tree import iter_elements
+from checks.verapdf import cite_rule
 
 CHECK_ID = "CHK-LINK"
 GENERIC = {"click here", "here", "read more", "more", "learn more", "link", "download", "go", "continue"}
@@ -176,6 +177,13 @@ def check(ctx: CheckContext) -> list[Issue]:
                 if key in seen:
                     continue
                 seen.add(key)
+                # Same page already has a link finding: cite the rule there instead of
+                # reporting the same link a second time as a separate finding.
+                same = [i for i in issues if i.issue_type != "link_pdfua_rule_needs_review"
+                        and (page_number is None or i.page == page_number)]
+                if same:
+                    cite_rule(same[0], rule)
+                    continue
                 issues.append(Issue(
                     CHECK_ID, "link_pdfua_rule_needs_review",
                     f"veraPDF reported PDF/UA-1 rule {rule.rule_id}: {rule.description} "

@@ -12,7 +12,7 @@ rule it fails that the inspector did not report is added for review.
 from __future__ import annotations
 
 from checks.base import CheckContext, Issue
-from checks.verapdf import cite_rule
+from checks.verapdf import add_advice, cite_rule
 
 CHECK_ID = "CHK-NONTEXT"
 MAX_RULE_ISSUES = 20
@@ -41,10 +41,8 @@ def check(ctx: CheckContext) -> list[Issue]:
                            "decorative images as artifacts.",
                 sources=["veraPDF"]))
     for issue in issues:
-        issue.suggestion = (issue.suggestion or "") + (
-            " Describe the image's purpose in Figure alt text, or mark it as "
-            'an artifact only if it is decorative.'
-        )
+        add_advice(issue, "Describe the image's purpose in Figure alt text, or mark it as "
+                          "an artifact only if it is decorative.")
         issue.suggested_text = issue.suggestion
         issue.suggestion_source = "rule"
     return issues

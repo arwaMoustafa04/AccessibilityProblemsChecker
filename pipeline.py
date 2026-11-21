@@ -170,7 +170,11 @@ def new_verapdf_failures(before: CheckContext, after: CheckContext) -> list[str]
     if not (old.available and new.available):
         return []
     known = {f.rule_id for f in old.failures}
-    return sorted({f.rule_id for f in new.failures} - known)
+    # Clause 5 (PDF/UA identification in XMP) can only be checked once XMP metadata
+    # exists, which the title repair creates. Adding that identification would claim
+    # PDF/UA conformance (REQ-14), so a clause-5 failure is not a repair regression.
+    return sorted(r for r in {f.rule_id for f in new.failures} - known
+                  if not r.startswith("5-"))
 
 
 # --- REPORTED ----------------------------------------------------------------
