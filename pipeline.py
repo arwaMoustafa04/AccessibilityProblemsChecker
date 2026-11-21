@@ -31,15 +31,10 @@ from pathlib import PurePath
 import pikepdf
 import pymupdf
 
-import wording_ai
 from catalog import CHECKS_BY_ID
-<<<<<<< HEAD
-from language_checks import collect, link_index
-=======
 from checks import CheckRun, run_checks
 from checks.base import CheckContext, Issue
 from checks.locate import Locator
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 from models import (
     ErrorCode,
     EvaluationResult,
@@ -49,24 +44,14 @@ from models import (
     OutputFile,
     Repair,
 )
-from remediation import RepairAction, RepairContext, ai, apply_repairs, can_repair
+from remediation import RepairAction, RepairContext, ai, apply_repairs, can_repair, wording
 
 log = logging.getLogger("pdf_accessibility.pipeline")
 MAX_FILE_SIZE_BYTES = 20_971_520
 COMPLIANCE_STATEMENT = "This report does not certify ADA Title II or WCAG 2.1 conformance."
 
-<<<<<<< HEAD
-# Title/language automatic repair remains off by default.
-ENABLE_TITLE_LANG_CHECKS = os.environ.get("ENABLE_TITLE_LANG_CHECKS", "").lower() in (
-    "1", "true", "yes")
-
-IMPLEMENTED_CHECKS = ["CHK-NONTEXT", "CHK-STRUCTURE", "CHK-LINK", "CHK-COLOR", "CHK-SENSORY"]
-TITLE_LANG_CHECKS = ["CHK-TITLE", "CHK-LANG"]
-NOT_YET_IMPLEMENTED = ["CHK-HEADINGS"]
-=======
 # On by default (Phase 5). ENABLE_REPAIRS=false gives the Phase 4 behaviour.
 ENABLE_REPAIRS = os.environ.get("ENABLE_REPAIRS", "true").lower() not in ("0", "false", "no")
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
 
 
 class PipelineError(Exception):
@@ -172,6 +157,8 @@ def repair(pdf: pikepdf.Pdf, issues: list[Issue], ctx: CheckContext,
     with warnings.catch_warnings(), ai.request_budget():  # LLM time/calls for this PDF
         warnings.simplefilter("ignore")  # pikepdf XMP sync warnings on odd metadata
         actions = apply_repairs([i for i in issues if can_repair(i)], rctx)
+        # Suggestions only (no PDF change), after the repairs so they get the LLM first.
+        wording.suggest_rewrites(issues, rctx)
     return actions, rctx
 
 
@@ -244,17 +231,12 @@ def build_report_pdf(result: dict) -> bytes:
                            f"{f['location']['description']}. "
                            f"Object: {f['location']['object_ref'] or 'none'}. "
                            f"Result: {f['evaluation_result']}. Status: {f['status']}."))
-<<<<<<< HEAD
-            if f["fix_description"]:
-                story.append(p(f["fix_description"]))
-=======
             if f.get("fix_description"):
                 story.append(p(f["fix_description"]))
             if f.get("suggested_text"):
                 label = (" (AI-generated, please verify)"
                          if f.get("suggestion_source") == "llm" else "")
                 story.append(p(f'Suggested text{label}: "{f["suggested_text"]}"'))
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     elif result["checks_performed"]:
         story.append(p("No issues found by the checks performed."))
     else:
@@ -361,8 +343,10 @@ def _limitations(run: CheckRun, ctx: CheckContext, repaired: bool,
     else:
         notes.append("Automatic repair covers CHK-TITLE (title, XMP title, DisplayDocTitle) "
                      "and CHK-LANG (document and passage language), plus AI-drafted Figure alt text "
-                     "and decorative-image artifacts for CHK-NONTEXT. Repairs are made on a "
-                     "copy and re-validated by running every check again.")
+                     "and decorative-image artifacts for CHK-NONTEXT and accessible labels for "
+                     "generic or unlabeled CHK-LINK links. CHK-COLOR and CHK-SENSORY rewrites are "
+                     "suggestions only; the PDF's visible text is never changed. Repairs are made "
+                     "on a copy and re-validated by running every check again.")
         if unrepaired_fixable:
             notes.append(f"{unrepaired_fixable} auto-fixable finding(s) have no automatic "
                          "repair yet and are reported as detected.")
@@ -466,62 +450,22 @@ def _repair_and_revalidate(pdf: pikepdf.Pdf, data: bytes, file_name: str, run: C
     return repaired_bytes, actions, after.issues, rctx.notes, mapping, rctx.content_refs
 
 
+def _is_not_marked(issue: Issue) -> bool:
+    return issue.check_id == "CHK-STRUCTURE" and issue.issue_type == "document_not_marked"
+
+
+def _restated_untagged(before: list[Issue], introduced: list[Issue]) -> bool:
+    """True when the original had no structure tree and the repaired copy is only
+    "not marked": a repair added tags, but the document is no more tagged than before."""
+    return (any(i.check_id == "CHK-STRUCTURE" and i.issue_type == "missing_document_structure"
+                for i in before)
+            and any(_is_not_marked(i) for i in introduced))
+
+
 def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     file_name = file_name or "upload.pdf"
     pdf = validate_input(data)  # opened from an in-memory copy; `data` is never changed
     try:
-<<<<<<< HEAD
-        issues = detect_issues(pdf)
-        actions = repair(pdf, issues, file_name) if ENABLE_TITLE_LANG_CHECKS else {}
-        candidates, tags, text_limits = collect(pdf, data)
-        suggestions = wording_ai.generate(candidates)
-        details = {}
-        label_edits = {}
-        for n, candidate in enumerate(candidates):
-            issue = candidate.issue
-            issues.append(issue)
-            ai_text = suggestions.get(str(n))
-            wording = ai_text or candidate.fallback
-            source = "AI" if ai_text else "fallback"
-            if candidate.annotation_index is None:
-                draft = " draft" if "[" in wording else ""
-                details[issue.key] = f"Suggested rewrite ({source}{draft}): {wording}"
-                continue
-            page_index = (issue.page or 1) - 1
-            index = candidate.annotation_index
-            annotation = pdf.pages[page_index].obj.Annots[index]
-            tag = tags.get(annotation.objgen)
-            annotation.Contents = wording
-            if tag is not None:
-                tag.Alt = wording
-            details[issue.key] = f"Applied label ({source}): {wording}"
-            if tag is None:
-                details[issue.key] += " (annotation only; check screen-reader support)"
-            label_edits[issue.key] = (page_index, index, wording, tag is not None)
-        modified = bool(actions or label_edits)
-        repaired_bytes = data
-        if modified:
-            out = io.BytesIO()
-            pdf.save(out)
-            repaired_bytes = out.getvalue()
-    finally:
-        pdf.close()
-
-    # REVALIDATED: re-run the implemented checks on the repaired copy.
-    remaining = issues
-    verified = {}
-    if modified:
-        with pikepdf.open(io.BytesIO(repaired_bytes)) as repaired:
-            remaining = detect_issues(repaired)
-            saved_tags = link_index(repaired) if label_edits else {}
-            for key, (page_index, index, wording, tagged) in label_edits.items():
-                annotation = repaired.pages[page_index].obj.Annots[index]
-                tag = saved_tags.get(annotation.objgen)
-                verified[key] = (str(annotation.get("/Contents", "")) == wording and
-                                 (not tagged or (tag is not None and str(tag.get("/Alt", "")) == wording)))
-                if not verified[key]:
-                    details[key] = f"Label could not be verified: {wording}"
-=======
         run, ctx = evaluate(data, file_name, pdf)
         try:
             repair_notes: list[str] = []
@@ -545,26 +489,12 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
     # Matched by type *and* place, so one fixed and one unfixed issue of the same type
     # are told apart (Issue.key).
     # Object numbers change when the repaired PDF is saved; compare in its numbering.
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     remaining_keys = {i.key for i in remaining}
     original_keys = {_translated_key(i, mapping, content_refs) for i in run.issues}
     findings: list[Finding] = []
     repairs: list[Repair] = []
     for n, issue in enumerate(run.issues, start=1):
         fid = f"F-{n}"
-<<<<<<< HEAD
-        if CHECKS_BY_ID[issue.check_id].classification == "human_review":
-            findings.append(_finding(fid, issue, "needs_human_review", details.get(issue.key)))
-            if issue.key in verified:
-                repairs.append(Repair(repair_id=f"R-{len(repairs) + 1}", finding_id=fid,
-                                      action=details[issue.key],
-                                      validation_result="passed" if verified[issue.key] else "failed"))
-            continue
-        passed = issue.key not in remaining_keys
-        findings.append(_finding(fid, issue, "fixed" if passed else "repair_failed",
-                                 actions.get(issue.issue_type)))
-        if issue.issue_type in actions:
-=======
         status = _status(issue)
         action = actions.get(issue.key)
         if action is not None:
@@ -572,17 +502,23 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
             if status == "detected":  # auto_fixable: the repair decides the status
                 status = "fixed" if fixed else "repair_failed"
             # human_review stays needs_human_review: a person must verify it (spec v0.5.0)
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
             repairs.append(Repair(repair_id=f"R-{len(repairs) + 1}", finding_id=fid,
                                   action=action.action,
                                   validation_result="passed" if fixed else "failed",
                                   method=action.method, applied_text=action.applied_text))
         findings.append(_finding(fid, issue, status, action))
-    new_issues = [
-        _finding(f"N-{n}", i, _status(i))
-        for n, i in enumerate(
-            (i for i in remaining if i.key not in original_keys), start=1)
-    ]
+    introduced = [i for i in remaining if i.key not in original_keys]
+    if _restated_untagged(run.issues, introduced):
+        # An untagged PDF stays untagged after an image repair adds a lone Figure tag:
+        # the structure check now says "not marked" instead of "no structure tree".
+        # Same problem, already reported (and still needs_human_review), so not "new".
+        introduced = [i for i in introduced if not _is_not_marked(i)]
+        limitations.append(
+            "The CHK-NONTEXT image repair added Figure tags to a document that had no "
+            "structure tree. The document is still not fully tagged, so it is not marked as "
+            "tagged (MarkInfo/Marked), and some assistive technology may ignore the new alt "
+            "text until the whole document is tagged. See the CHK-STRUCTURE finding.")
+    new_issues = [_finding(f"N-{n}", i, _status(i)) for n, i in enumerate(introduced, start=1)]
 
     human_review = [f.finding_id for f in findings + new_issues
                     if f.classification == "human_review"]
@@ -591,29 +527,6 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
         "evaluation_id": str(uuid.uuid4()),
         "status": "completed",
         "input": {"file_name": file_name, "sha256": _sha256(data), "size_bytes": len(data)},
-<<<<<<< HEAD
-        "outcome": "completed_with_repairs" if modified else "completed_no_repairs",
-        "checks_performed": enabled,
-        "findings": [f.model_dump() for f in findings],
-        "repairs": [r.model_dump() for r in repairs],
-        "new_issues_after_repair": [f.model_dump() for f in new_issues],
-        "human_review_items": review_ids,
-        "summary": {"total_issues": len(findings), "fixed_count": fixed,
-                    "human_review_count": len(review_ids)},
-        "limitations": [
-            "Checks " + ", ".join(disabled)
-            + " were not performed (unimplemented or disabled).",
-            "Link label writes are verified in the saved PDF. A person should confirm the wording. "
-            "Color and sensory rewrites are suggestions for the author.",
-            *text_limits,
-            "Image purpose, alternative-text accuracy, reading order, complete tagging, and table "
-            "semantics require human review. Untagged tables and vector graphics are not inferred.",
-            "A present Alt or TH tag does not establish accessibility or semantic correctness.",
-            *([f'Titles are derived from filenames and languages default to "{DEFAULT_LANGUAGE}"; '
-               'a person should confirm both.'] if ENABLE_TITLE_LANG_CHECKS else []),
-        ],
-        "compliance_statement": "This report does not certify ADA Title II or WCAG 2.1 conformance.",
-=======
         "outcome": "completed_with_repairs" if actions else "completed_no_repairs",
         "checks_performed": run.performed,
         "findings": [f.model_dump() for f in findings],
@@ -625,21 +538,13 @@ def run_pipeline(data: bytes, file_name: str) -> EvaluationResult:
                     "human_review_count": len(human_review)},
         "limitations": limitations,
         "compliance_statement": COMPLIANCE_STATEMENT,
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     }
     report_bytes = build_report_pdf(result)
     return EvaluationResult.model_validate({
         **result,
-<<<<<<< HEAD
-        "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(repaired_bytes),
-                              modified=modified, content_base64=_b64(repaired_bytes)),
-        "report_pdf": OutputFile(file_name=f"{stem}_report.pdf", sha256=_sha256(report_bytes),
-                              content_base64=_b64(report_bytes)),
-=======
         "output_pdf": OutputFile(file_name=f"{stem}_repaired.pdf", sha256=_sha256(output_bytes),
                                  modified=bool(actions), content_base64=_b64(output_bytes)),
         "report_pdf": OutputFile(file_name=f"{stem}_AccessibilityReport.pdf",
                                  sha256=_sha256(report_bytes),
                                  content_base64=_b64(report_bytes)),
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     })

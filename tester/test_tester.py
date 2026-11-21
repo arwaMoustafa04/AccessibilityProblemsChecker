@@ -186,10 +186,5 @@ def test_phase5_suite_passes_with_repairs_enabled(target, monkeypatch) -> None:
     report = tester.post("/test/run", json={"session_id": sid}).json()
     check_report_format(report)
     outcomes = {r["test_id"]: r["outcome"] for r in report["results"]}
-<<<<<<< HEAD
-    # CHK-HEADINGS remains unimplemented, so full detection (T-13) still fails.
-    assert outcomes.pop("T-13") == "fail"
-=======
     # All eight checks are registered, so full detection (T-13) passes too.
->>>>>>> f1a68543183c4e58117898dee83f3450b129da5a
     assert set(outcomes.values()) == {"pass"}

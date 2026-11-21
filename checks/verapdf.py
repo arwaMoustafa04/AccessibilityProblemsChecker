@@ -86,17 +86,24 @@ def run_verapdf(data: bytes) -> VeraReport:
     cmd = verapdf_command()
     if not cmd:
         return VeraReport(False, error="veraPDF is not installed on this server")
-    with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
+    # Closed before veraPDF runs: on Windows an open NamedTemporaryFile cannot be read
+    # by another process. Deleted afterwards in every case.
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(data)
-        tmp.flush()
+    try:
+        proc = subprocess.run(
+            [cmd, "--flavour", "ua1", "--format", "mrr", tmp.name],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        return VeraReport(False, error=f"veraPDF did not finish within {TIMEOUT_SECONDS:.0f} s")
+    except OSError as exc:
+        return VeraReport(False, error=f"veraPDF could not be started: {exc}")
+    finally:
         try:
-            proc = subprocess.run(
-                [cmd, "--flavour", "ua1", "--format", "mrr", tmp.name],
-                capture_output=True, text=True, timeout=TIMEOUT_SECONDS, check=False)
-        except subprocess.TimeoutExpired:
-            return VeraReport(False, error=f"veraPDF did not finish within {TIMEOUT_SECONDS:.0f} s")
-        except OSError as exc:
-            return VeraReport(False, error=f"veraPDF could not be started: {exc}")
+            os.unlink(tmp.name)
+        except OSError:
+            pass
     # veraPDF exits 1 when the file is not compliant; that is a normal result.
     if not proc.stdout.strip().startswith("<"):
         return VeraReport(False, error=f"veraPDF failed (exit code {proc.returncode})")
