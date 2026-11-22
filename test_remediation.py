@@ -182,7 +182,8 @@ def test_ai_title_is_used_labeled_and_noted(fake_llm):
     assert any("sent to an external language model provider" in n for n in result.limitations)
 
 
-@pytest.mark.parametrize("answer", [None, "", "Untitled", "x" * 300])
+@pytest.mark.parametrize("answer", [None, "", "Untitled", "x" * 300],
+                         ids=["none", "empty", "placeholder", "too-long"])
 def test_unusable_ai_title_falls_back_to_rules(fake_llm, answer):
     fake_llm.suggest_title = lambda text, name: answer
     result = run(text_pdf([("Campus Library", 22), (ENGLISH, 11)], lang="en"))

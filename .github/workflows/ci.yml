@@ -51,7 +51,7 @@ jobs:
 
       - name: Unit and integration tests (system + tester)
         timeout-minutes: 10
-        run: python -m pytest -v
+        run: python -m pytest -v -o faulthandler_timeout=90
 
       - name: Start the system
         run: |

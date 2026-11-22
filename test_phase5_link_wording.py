@@ -155,7 +155,8 @@ def test_ai_link_label_used_and_query_string_not_sent(monkeypatch):
     assert any("external model provider" in line for line in result["limitations"])
 
 
-@pytest.mark.parametrize("bad", [None, "click here", "[link name]", "x" * 200])
+@pytest.mark.parametrize("bad", [None, "click here", "[link name]", "x" * 200],
+                         ids=["none", "generic", "placeholder", "too-long"])
 def test_unusable_ai_link_label_falls_back(monkeypatch, bad):
     monkeypatch.setattr(ai, "available", lambda: True)
     monkeypatch.setattr(ai, "sends_data", lambda: False)

@@ -176,7 +176,8 @@ def test_image_is_sent_as_a_data_url(api):
 
 
 @pytest.mark.parametrize("data, mime", [(b"", "image/png"), (b"x", "image/tiff"),
-                                        (b"x" * (llm.MAX_IMAGE_BYTES + 1), "image/png")])
+                                        (b"x" * (llm.MAX_IMAGE_BYTES + 1), "image/png")],
+                         ids=["empty", "tiff", "too-large"])  # short ids: a 4 MB id hangs CI logs
 def test_unusable_images_are_not_sent(api, data, mime):
     assert llm.describe_image(data, "", mime) is None
     assert api.requests == []
